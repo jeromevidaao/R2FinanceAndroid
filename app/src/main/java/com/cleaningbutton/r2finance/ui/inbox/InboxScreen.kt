@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
@@ -27,6 +28,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cleaningbutton.r2finance.R
 import com.cleaningbutton.r2finance.data.AppContainer
+import com.cleaningbutton.r2finance.data.local.entity.CategoryEntity
+import com.cleaningbutton.r2finance.data.repository.TransactionRow
 import com.cleaningbutton.r2finance.domain.Money
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
@@ -36,13 +39,17 @@ import kotlinx.coroutines.launch
 fun InboxScreen(container: AppContainer) {
     val scope = rememberCoroutineScope()
     var planId by remember { mutableStateOf<String?>(null) }
+    var categories by remember { mutableStateOf<List<CategoryEntity>>(emptyList()) }
+    var categorizeTarget by remember { mutableStateOf<TransactionRow?>(null) }
 
     LaunchedEffect(Unit) {
-        planId = container.ledger.ensureDefaultPlan().id
+        val plan = container.ledger.ensureDefaultPlan()
+        planId = plan.id
+        categories = container.ledger.listCategories(plan.id)
     }
 
     val items by remember(planId) {
-        planId?.let { container.ledger.observeInbox(it) } ?: flowOf(emptyList())
+        planId?.let { container.ledger.observeInboxRows(it) } ?: flowOf(emptyList())
     }.collectAsStateWithLifecycle(initialValue = emptyList())
 
     Scaffold(
@@ -68,32 +75,84 @@ fun InboxScreen(container: AppContainer) {
                     .padding(padding),
                 contentPadding = PaddingValues(vertical = 8.dp),
             ) {
-                items(items, key = { it.id }) { txn ->
+                items(items, key = { it.txn.id }) { row ->
+                    val txn = row.txn
                     ListItem(
                         headlineContent = {
+                            Text(row.payeeName ?: "No payee")
+                        },
+                        supportingContent = {
                             Text(
-                                when {
-                                    !txn.approved -> "Needs approval"
-                                    txn.categoryId == null -> "Uncategorized"
-                                    else -> "Review"
+                                buildString {
+                                    append(row.accountName ?: "Account")
+                                    append(" · ")
+                                    append(txn.date)
+                                    append(" · ")
+                                    append(Money.format(txn.amountMilli))
+                                    append(
+                                        when {
+                                            !txn.approved -> " · needs approval"
+                                            txn.categoryId == null -> " · uncategorized"
+                                            else -> ""
+                                        },
+                                    )
                                 },
                             )
                         },
-                        supportingContent = {
-                            Text("${txn.date} · ${Money.format(txn.amountMilli)}")
-                        },
                         trailingContent = {
-                            if (!txn.approved) {
-                                TextButton(
-                                    onClick = {
-                                        scope.launch { container.ledger.approve(txn.id) }
-                                    },
-                                ) { Text("Approve") }
+                            Column {
+                                if (!txn.approved) {
+                                    TextButton(
+                                        onClick = {
+                                            scope.launch { container.ledger.approve(txn.id) }
+                                        },
+                                    ) { Text("Approve") }
+                                }
+                                if (txn.categoryId == null) {
+                                    TextButton(onClick = { categorizeTarget = row }) {
+                                        Text("Categorize")
+                                    }
+                                }
                             }
                         },
                     )
                 }
             }
         }
+    }
+
+    val target = categorizeTarget
+    if (target != null) {
+        AlertDialog(
+            onDismissRequest = { categorizeTarget = null },
+            title = { Text("Choose category") },
+            text = {
+                if (categories.isEmpty()) {
+                    Text("No categories yet. Create some under Categories, or import from YNAB in More.")
+                } else {
+                    LazyColumn {
+                        items(categories, key = { it.id }) { cat ->
+                            TextButton(
+                                onClick = {
+                                    scope.launch {
+                                        container.ledger.setCategory(target.txn.id, cat.id)
+                                        if (!target.txn.approved) {
+                                            container.ledger.approve(target.txn.id)
+                                        }
+                                        categorizeTarget = null
+                                        planId?.let {
+                                            categories = container.ledger.listCategories(it)
+                                        }
+                                    }
+                                },
+                            ) { Text(cat.name) }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { categorizeTarget = null }) { Text("Close") }
+            },
+        )
     }
 }

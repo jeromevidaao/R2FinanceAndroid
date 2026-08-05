@@ -38,9 +38,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cleaningbutton.r2finance.R
 import com.cleaningbutton.r2finance.data.AppContainer
 import com.cleaningbutton.r2finance.data.local.entity.AccountEntity
-import com.cleaningbutton.r2finance.data.local.entity.TransactionEntity
+import com.cleaningbutton.r2finance.data.repository.TransactionRow
 import com.cleaningbutton.r2finance.domain.Money
 import java.time.LocalDate
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -61,8 +62,14 @@ fun RegisterScreen(
         account = container.ledger.getAccount(accountId)
     }
 
-    val txns by container.ledger.observeRegister(accountId)
-        .collectAsStateWithLifecycle(initialValue = emptyList())
+    val planId = account?.planId
+    val txns by remember(accountId, planId) {
+        if (planId != null) {
+            container.ledger.observeRegisterRows(accountId, planId)
+        } else {
+            flowOf(emptyList())
+        }
+    }.collectAsStateWithLifecycle(initialValue = emptyList())
 
     Scaffold(
         topBar = {
@@ -101,8 +108,8 @@ fun RegisterScreen(
                     .padding(padding),
                 contentPadding = PaddingValues(vertical = 8.dp),
             ) {
-                items(txns, key = { it.id }) { txn ->
-                    TransactionRow(txn)
+                items(txns, key = { it.txn.id }) { row ->
+                    TransactionRowItem(row)
                 }
             }
         }
@@ -170,23 +177,30 @@ fun RegisterScreen(
 }
 
 @Composable
-private fun TransactionRow(txn: TransactionEntity) {
+private fun TransactionRowItem(row: TransactionRow) {
+    val txn = row.txn
     ListItem(
         headlineContent = {
-            Text(txn.payeeId?.let { "Payee" } ?: "No payee")
+            Text(row.payeeName ?: "No payee")
         },
         supportingContent = {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(txn.date)
-                Text(
-                    if (txn.approved) txn.cleared.name else "unapproved",
-                    style = MaterialTheme.typography.labelSmall,
-                )
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(txn.date)
+                    Text(
+                        buildString {
+                            append(if (txn.approved) txn.cleared.name else "unapproved")
+                            row.categoryName?.let { append(" · $it") }
+                                ?: if (txn.approved) append(" · uncategorized")
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+                txn.memo?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
-            txn.memo?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         },
         trailingContent = {
             Text(

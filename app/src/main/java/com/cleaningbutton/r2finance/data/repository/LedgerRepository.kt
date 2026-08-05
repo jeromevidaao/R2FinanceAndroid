@@ -33,6 +33,14 @@ data class CategoryTreeNode(
     val categories: List<CategoryEntity>,
 )
 
+/** Register / inbox row with resolved names for UI. */
+data class TransactionRow(
+    val txn: TransactionEntity,
+    val payeeName: String?,
+    val categoryName: String?,
+    val accountName: String? = null,
+)
+
 class LedgerRepository(
     private val db: R2FinanceDatabase,
 ) {
@@ -77,6 +85,48 @@ class LedgerRepository(
 
     fun observeInbox(planId: String) = txns.observeInbox(planId)
 
+    fun observeRegisterRows(accountId: String, planId: String): Flow<List<TransactionRow>> {
+        return combine(
+            txns.observeByAccount(accountId),
+            payees.observePayees(planId),
+            categories.observeCategories(planId),
+        ) { list, payeeList, catList ->
+            val payeeMap = payeeList.associateBy { it.id }
+            val catMap = catList.associateBy { it.id }
+            list.map { t ->
+                TransactionRow(
+                    txn = t,
+                    payeeName = t.payeeId?.let { payeeMap[it]?.name },
+                    categoryName = when {
+                        t.categoryId != null -> catMap[t.categoryId]?.name
+                        else -> null
+                    },
+                )
+            }
+        }
+    }
+
+    fun observeInboxRows(planId: String): Flow<List<TransactionRow>> {
+        return combine(
+            txns.observeInbox(planId),
+            payees.observePayees(planId),
+            categories.observeCategories(planId),
+            accounts.observeOpenAccounts(planId),
+        ) { list, payeeList, catList, acctList ->
+            val payeeMap = payeeList.associateBy { it.id }
+            val catMap = catList.associateBy { it.id }
+            val acctMap = acctList.associateBy { it.id }
+            list.map { t ->
+                TransactionRow(
+                    txn = t,
+                    payeeName = t.payeeId?.let { payeeMap[it]?.name },
+                    categoryName = t.categoryId?.let { catMap[it]?.name },
+                    accountName = acctMap[t.accountId]?.name,
+                )
+            }
+        }
+    }
+
     fun observeCategoryTree(planId: String): Flow<List<CategoryTreeNode>> {
         return combine(
             categories.observeGroups(planId),
@@ -90,6 +140,11 @@ class LedgerRepository(
             }
         }
     }
+
+    suspend fun listCategories(planId: String): List<CategoryEntity> =
+        categories.listCategories(planId)
+
+    suspend fun countTransactions(planId: String): Int = txns.countForPlan(planId)
 
     suspend fun createAccount(
         planId: String,
@@ -137,11 +192,12 @@ class LedgerRepository(
     }
 
     suspend fun ensurePayee(planId: String, name: String): PayeeEntity {
-        // Simple: always create; Phase 2 will merge by name/ynabId.
+        val trimmed = name.trim()
+        payees.getByName(planId, trimmed)?.let { return it }
         val p = PayeeEntity(
             id = UUID.randomUUID().toString(),
             planId = planId,
-            name = name.trim(),
+            name = trimmed,
             syncStatus = SyncStatus.PENDING_PUSH,
         )
         payees.upsert(p)

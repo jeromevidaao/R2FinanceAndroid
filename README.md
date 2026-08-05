@@ -8,10 +8,17 @@ Companion API/infra: **[R2FinanceAPI](https://github.com/cleaningbutton/R2Financ
 
 | Phase | What |
 |-------|------|
-| **1** (now) | Room data model, Compose UI shells, local CRUD, OTA |
-| **2** | Migrate all data from YNAB |
+| **1** | Room data model, Compose UI, local CRUD, OTA |
+| **2** (in app) | YNAB PAT (encrypted) + full import + balance audit — **More** tab |
 | **3** | Bidirectional sync via R2FinanceAPI ↔ YNAB |
 | **4** | Cut the cord from YNAB |
+
+### YNAB import (Phase 2)
+
+1. YNAB → Account Settings → Developer Settings → New Personal Access Token  
+2. Open **R2Finance → More** → paste token → **Save** → **Import from YNAB**  
+3. Review balance audit lines (✓ match / ≠ mismatch)  
+4. Token stays on device only (EncryptedSharedPreferences) until Phase 3 server secret
 
 See [docs/PHASED_PLAN.md](docs/PHASED_PLAN.md).
 

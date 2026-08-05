@@ -12,6 +12,7 @@ import com.cleaningbutton.r2finance.data.local.entity.CategoryGroupEntity
 import com.cleaningbutton.r2finance.data.local.entity.PayeeCategoryMemoryEntity
 import com.cleaningbutton.r2finance.data.local.entity.PayeeEntity
 import com.cleaningbutton.r2finance.data.local.entity.PlanEntity
+import com.cleaningbutton.r2finance.data.local.entity.ScheduledTransactionEntity
 import com.cleaningbutton.r2finance.data.local.entity.SubTransactionEntity
 import com.cleaningbutton.r2finance.data.local.entity.TransactionEntity
 import kotlinx.coroutines.flow.Flow
@@ -23,6 +24,9 @@ interface PlanDao {
 
     @Query("SELECT * FROM plans WHERE id = :id LIMIT 1")
     suspend fun getById(id: String): PlanEntity?
+
+    @Query("SELECT * FROM plans WHERE ynabId = :ynabId LIMIT 1")
+    suspend fun getByYnabId(ynabId: String): PlanEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(plan: PlanEntity)
@@ -38,6 +42,9 @@ interface AccountDao {
 
     @Query("SELECT * FROM accounts WHERE id = :id LIMIT 1")
     suspend fun getById(id: String): AccountEntity?
+
+    @Query("SELECT * FROM accounts WHERE ynabId = :ynabId LIMIT 1")
+    suspend fun getByYnabId(ynabId: String): AccountEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(account: AccountEntity)
@@ -68,12 +75,30 @@ interface CategoryDao {
 
     @Query("SELECT * FROM categories WHERE id = :id LIMIT 1")
     suspend fun getCategory(id: String): CategoryEntity?
+
+    @Query("SELECT * FROM categories WHERE ynabId = :ynabId LIMIT 1")
+    suspend fun getCategoryByYnabId(ynabId: String): CategoryEntity?
+
+    @Query("SELECT * FROM category_groups WHERE ynabId = :ynabId LIMIT 1")
+    suspend fun getGroupByYnabId(ynabId: String): CategoryGroupEntity?
+
+    @Query("SELECT * FROM categories WHERE planId = :planId AND deleted = 0 AND hidden = 0 ORDER BY name")
+    suspend fun listCategories(planId: String): List<CategoryEntity>
 }
 
 @Dao
 interface PayeeDao {
     @Query("SELECT * FROM payees WHERE planId = :planId AND deleted = 0 ORDER BY name")
     fun observePayees(planId: String): Flow<List<PayeeEntity>>
+
+    @Query("SELECT * FROM payees WHERE id = :id LIMIT 1")
+    suspend fun getById(id: String): PayeeEntity?
+
+    @Query("SELECT * FROM payees WHERE planId = :planId AND name = :name AND deleted = 0 LIMIT 1")
+    suspend fun getByName(planId: String, name: String): PayeeEntity?
+
+    @Query("SELECT * FROM payees WHERE ynabId = :ynabId LIMIT 1")
+    suspend fun getByYnabId(ynabId: String): PayeeEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(payee: PayeeEntity)
@@ -140,6 +165,20 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions WHERE id = :id LIMIT 1")
     suspend fun getById(id: String): TransactionEntity?
 
+    @Query("SELECT * FROM transactions WHERE ynabId = :ynabId LIMIT 1")
+    suspend fun getByYnabId(ynabId: String): TransactionEntity?
+
+    @Query("SELECT * FROM transactions WHERE accountId = :accountId AND importId = :importId LIMIT 1")
+    suspend fun getByImportId(accountId: String, importId: String): TransactionEntity?
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM transactions
+        WHERE planId = :planId AND deleted = 0
+        """,
+    )
+    suspend fun countForPlan(planId: String): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(txn: TransactionEntity)
 
@@ -160,4 +199,13 @@ interface TransactionDao {
         upsert(txn)
         if (subs.isNotEmpty()) upsertSubs(subs)
     }
+}
+
+@Dao
+interface ScheduledDao {
+    @Query("SELECT * FROM scheduled_transactions WHERE ynabId = :ynabId LIMIT 1")
+    suspend fun getByYnabId(ynabId: String): ScheduledTransactionEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(entity: ScheduledTransactionEntity)
 }

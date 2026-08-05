@@ -171,7 +171,8 @@ data class PayeeCategoryMemoryEntity(
         Index("payeeId"),
         Index("categoryId"),
         Index("ynabId"),
-        Index(value = ["accountId", "importId"], unique = true),
+        // import_id dedupe is enforced in importer (nullable unique is awkward in SQLite).
+        Index(value = ["accountId", "importId"]),
         Index("date"),
     ],
 )

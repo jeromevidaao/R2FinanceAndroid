@@ -10,6 +10,7 @@ import com.cleaningbutton.r2finance.data.local.dao.AccountDao
 import com.cleaningbutton.r2finance.data.local.dao.CategoryDao
 import com.cleaningbutton.r2finance.data.local.dao.PayeeDao
 import com.cleaningbutton.r2finance.data.local.dao.PlanDao
+import com.cleaningbutton.r2finance.data.local.dao.ScheduledDao
 import com.cleaningbutton.r2finance.data.local.dao.TransactionDao
 import com.cleaningbutton.r2finance.data.local.entity.AccountEntity
 import com.cleaningbutton.r2finance.data.local.entity.CategoryEntity
@@ -65,6 +66,7 @@ abstract class R2FinanceDatabase : RoomDatabase() {
     abstract fun categoryDao(): CategoryDao
     abstract fun payeeDao(): PayeeDao
     abstract fun transactionDao(): TransactionDao
+    abstract fun scheduledDao(): ScheduledDao
 
     companion object {
         @Volatile private var instance: R2FinanceDatabase? = null
