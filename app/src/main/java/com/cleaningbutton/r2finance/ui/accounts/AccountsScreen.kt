@@ -4,9 +4,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -162,12 +165,12 @@ fun AccountsScreen(
                             modifier = Modifier.padding(top = 8.dp),
                         )
                     }
-                    TextButton(
-                        onClick = { pullFromCloud(force = true) },
-                        modifier = Modifier.padding(top = 16.dp),
-                    ) {
-                        Icon(Icons.Default.CloudDownload, contentDescription = null)
-                        Text("  Sync from cloud", modifier = Modifier.padding(start = 4.dp))
+                    TextButton(onClick = { pullFromCloud(force = true) }) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.CloudDownload, contentDescription = null)
+                            Spacer(Modifier = Modifier.width(8.dp))
+                            Text("Sync from cloud")
+                        }
                     }
                 }
             }
