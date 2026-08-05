@@ -193,8 +193,10 @@ private fun TransactionRowItem(row: TransactionRow) {
                     Text(
                         buildString {
                             append(if (txn.approved) txn.cleared.name else "unapproved")
-                            row.categoryName?.let { append(" · $it") }
-                                ?: if (txn.approved) append(" · uncategorized")
+                            when {
+                                row.categoryName != null -> append(" · ${row.categoryName}")
+                                txn.approved -> append(" · uncategorized")
+                            }
                         },
                         style = MaterialTheme.typography.labelSmall,
                     )
