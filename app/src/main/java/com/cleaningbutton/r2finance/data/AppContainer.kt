@@ -3,6 +3,8 @@ package com.cleaningbutton.r2finance.data
 import android.content.Context
 import com.cleaningbutton.r2finance.data.auth.AuthApi
 import com.cleaningbutton.r2finance.data.auth.SessionStore
+import com.cleaningbutton.r2finance.data.cloud.CloudApi
+import com.cleaningbutton.r2finance.data.cloud.CloudSync
 import com.cleaningbutton.r2finance.data.local.R2FinanceDatabase
 import com.cleaningbutton.r2finance.data.repository.LedgerRepository
 import com.cleaningbutton.r2finance.data.ynab.YnabClient
@@ -20,4 +22,6 @@ class AppContainer(context: Context) {
     val ynabImporter: YnabImporter = YnabImporter(database, ynabClient)
     val sessionStore: SessionStore = SessionStore(appContext)
     val authApi: AuthApi = AuthApi()
+    val cloudApi: CloudApi = CloudApi()
+    val cloudSync: CloudSync = CloudSync(database, cloudApi)
 }

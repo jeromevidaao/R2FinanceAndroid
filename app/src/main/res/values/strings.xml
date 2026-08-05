@@ -5,7 +5,7 @@
     <string name="nav_inbox">Inbox</string>
     <string name="nav_categories">Categories</string>
     <string name="nav_more">More</string>
-    <string name="empty_accounts">No accounts yet.\nPhase 2 will import from YNAB.</string>
+    <string name="empty_accounts">No accounts on this phone yet.\nTap Sync to download from R2Finance cloud.</string>
     <string name="empty_register">No transactions in this account.</string>
     <string name="empty_inbox">Inbox is clear — nothing unapproved or uncategorized.</string>
     <string name="empty_categories">No categories yet.</string>

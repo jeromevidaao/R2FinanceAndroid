@@ -53,9 +53,11 @@ class LedgerRepository(
     fun observePlans() = plans.observePlans()
 
     suspend fun ensureDefaultPlan(): PlanEntity {
+        // Stable id so cloud sync (R2FinanceAPI plan "default") matches local Room.
+        plans.getById("default")?.let { return it }
         plans.getDefault()?.let { return it }
         val plan = PlanEntity(
-            id = UUID.randomUUID().toString(),
+            id = "default",
             name = "My Plan",
             syncStatus = SyncStatus.LOCAL_ONLY,
         )
