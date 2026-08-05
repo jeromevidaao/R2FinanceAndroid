@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">R2Finance</string>
+    <string name="nav_accounts">Accounts</string>
+    <string name="nav_inbox">Inbox</string>
+    <string name="nav_categories">Categories</string>
+    <string name="nav_more">More</string>
+    <string name="empty_accounts">No accounts yet.\nPhase 2 will import from YNAB.</string>
+    <string name="empty_register">No transactions in this account.</string>
+    <string name="empty_inbox">Inbox is clear — nothing unapproved or uncategorized.</string>
+    <string name="empty_categories">No categories yet.</string>
+    <string name="update_available">Update available</string>
+    <string name="update_install">Install update</string>
+</resources>
