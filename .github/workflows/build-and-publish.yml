@@ -37,18 +37,20 @@ jobs:
       - name: Unit tests
         run: ./gradlew testDebugUnitTest --stacktrace
 
+      # OIDC + OTA only when AWS_ROLE_ARN is configured (same pattern as R2Android).
       - name: Configure AWS credentials (OIDC)
-        if: github.event_name != 'pull_request'
+        id: aws
+        if: github.event_name != 'pull_request' && secrets.AWS_ROLE_ARN != ''
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1
 
       - name: Load stable signing keystore from SSM
-        if: github.event_name != 'pull_request'
+        id: signing
+        if: steps.aws.outcome == 'success'
         run: |
           set -euo pipefail
-          # Prefer R2Finance-specific params; fall back to Cleaning Button keystore.
           load() {
             local name="$1"
             aws ssm get-parameter --name "$name" --with-decryption \
@@ -74,9 +76,10 @@ jobs:
           echo "CB_KEY_PASSWORD=$KEY_PASS" >> "$GITHUB_ENV"
           keytool -list -keystore "$KS_PATH" -storepass "$STORE_PASS" -storetype PKCS12 >/dev/null
           echo "Stable keystore loaded"
+          echo "has_signing=true" >> "$GITHUB_OUTPUT"
 
       - name: Ensure versionCode > published OTA
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: steps.signing.outputs.has_signing == 'true' && github.ref == 'refs/heads/main'
         run: |
           set -euo pipefail
           aws s3 cp "s3://cleansite/r2finance-builds/version.json" /tmp/prev-version.json \
@@ -85,15 +88,7 @@ jobs:
           python3 scripts/ensure-ota-version-bump.py
 
       - name: Build debug APK
-        run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            if [ -z "${CB_KEYSTORE_PATH:-}" ] || [ ! -f "${CB_KEYSTORE_PATH}" ]; then
-              echo "::error::Stable keystore missing — refusing randomly signed APK"
-              exit 1
-            fi
-          fi
-          ./gradlew assembleDebug --stacktrace
+        run: ./gradlew assembleDebug --stacktrace
 
       - name: Locate APK
         id: apk
@@ -104,7 +99,7 @@ jobs:
           ls -lh "$APK_PATH"
 
       - name: Publish OTA to S3
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: steps.signing.outputs.has_signing == 'true' && github.ref == 'refs/heads/main'
         env:
           APK_PATH: ${{ steps.apk.outputs.path }}
         run: |
@@ -126,3 +121,9 @@ jobs:
           aws s3 cp /tmp/history.json "$DEST_PREFIX/history.json" --content-type application/json
           echo "Published OTA: $LATEST_URL"
           cat /tmp/version.json
+
+      - name: OTA skipped notice
+        if: github.event_name != 'pull_request' && steps.signing.outputs.has_signing != 'true'
+        run: |
+          echo "OTA publish skipped — set repo secret AWS_ROLE_ARN (OIDC) and ensure SSM keystore access."
+          echo "Unit tests + APK assemble still gate the build."
