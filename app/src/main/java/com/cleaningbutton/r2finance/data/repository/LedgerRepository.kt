@@ -143,6 +143,16 @@ class LedgerRepository(
         }
     }
 
+    /** Full plan transactions for reports (Room is source of truth). */
+    fun observePlanTransactions(planId: String): Flow<List<TransactionEntity>> =
+        txns.observeForPlan(planId)
+
+    fun observePayees(planId: String) = payees.observePayees(planId)
+
+    fun observeCategories(planId: String) = categories.observeCategories(planId)
+
+    fun observeCategoryGroups(planId: String) = categories.observeGroups(planId)
+
     /** One-shot category tree for categorize picker headers. */
     suspend fun listCategoryTree(planId: String): List<CategoryTreeNode> {
         val groups = categories.listGroups(planId)

@@ -3,6 +3,7 @@ package com.cleaningbutton.r2finance.ui.navigation
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.MoreHoriz
@@ -29,11 +30,13 @@ import com.cleaningbutton.r2finance.ui.categories.CategoriesScreen
 import com.cleaningbutton.r2finance.ui.inbox.InboxScreen
 import com.cleaningbutton.r2finance.ui.more.MoreScreen
 import com.cleaningbutton.r2finance.ui.register.RegisterScreen
+import com.cleaningbutton.r2finance.ui.reports.ReportsScreen
 
 private object Routes {
     const val Accounts = "accounts"
     const val Inbox = "inbox"
     const val Categories = "categories"
+    const val Reports = "reports"
     const val More = "more"
     const val Register = "register/{accountId}"
     fun register(accountId: String) = "register/$accountId"
@@ -48,8 +51,19 @@ fun AppNavHost(container: AppContainer) {
         Routes.Accounts,
         Routes.Inbox,
         Routes.Categories,
+        Routes.Reports,
         Routes.More,
     )
+
+    fun go(dest: String) {
+        navController.navigate(dest) {
+            popUpTo(navController.graph.findStartDestination().id) {
+                saveState = true
+            }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
 
     Scaffold(
         bottomBar = {
@@ -57,57 +71,31 @@ fun AppNavHost(container: AppContainer) {
                 NavigationBar {
                     NavigationBarItem(
                         selected = route == Routes.Accounts,
-                        onClick = {
-                            navController.navigate(Routes.Accounts) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
-                                }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
+                        onClick = { go(Routes.Accounts) },
                         icon = { Icon(Icons.Default.AccountBalance, contentDescription = null) },
                         label = { Text(stringResource(R.string.nav_accounts)) },
                     )
                     NavigationBarItem(
                         selected = route == Routes.Inbox,
-                        onClick = {
-                            navController.navigate(Routes.Inbox) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
-                                }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
+                        onClick = { go(Routes.Inbox) },
                         icon = { Icon(Icons.Default.Inbox, contentDescription = null) },
                         label = { Text(stringResource(R.string.nav_inbox)) },
                     )
                     NavigationBarItem(
                         selected = route == Routes.Categories,
-                        onClick = {
-                            navController.navigate(Routes.Categories) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
-                                }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
+                        onClick = { go(Routes.Categories) },
                         icon = { Icon(Icons.Default.Category, contentDescription = null) },
                         label = { Text(stringResource(R.string.nav_categories)) },
                     )
                     NavigationBarItem(
+                        selected = route == Routes.Reports,
+                        onClick = { go(Routes.Reports) },
+                        icon = { Icon(Icons.Default.BarChart, contentDescription = null) },
+                        label = { Text(stringResource(R.string.nav_reports)) },
+                    )
+                    NavigationBarItem(
                         selected = route == Routes.More,
-                        onClick = {
-                            navController.navigate(Routes.More) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
-                                }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
+                        onClick = { go(Routes.More) },
                         icon = { Icon(Icons.Default.MoreHoriz, contentDescription = null) },
                         label = { Text(stringResource(R.string.nav_more)) },
                     )
@@ -131,6 +119,9 @@ fun AppNavHost(container: AppContainer) {
             }
             composable(Routes.Categories) {
                 CategoriesScreen(container = container)
+            }
+            composable(Routes.Reports) {
+                ReportsScreen(container = container)
             }
             composable(Routes.More) {
                 MoreScreen(container = container)

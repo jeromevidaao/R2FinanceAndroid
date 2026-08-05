@@ -247,6 +247,25 @@ interface TransactionDao {
     )
     suspend fun countForPlan(planId: String): Int
 
+    /** All non-deleted transactions for analytics / reports. */
+    @Query(
+        """
+        SELECT * FROM transactions
+        WHERE planId = :planId AND deleted = 0
+        ORDER BY date DESC, updatedAt DESC
+        """,
+    )
+    fun observeForPlan(planId: String): Flow<List<TransactionEntity>>
+
+    @Query(
+        """
+        SELECT * FROM transactions
+        WHERE planId = :planId AND deleted = 0
+        ORDER BY date DESC, updatedAt DESC
+        """,
+    )
+    suspend fun listForPlan(planId: String): List<TransactionEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(txn: TransactionEntity)
 

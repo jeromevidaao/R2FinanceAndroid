@@ -4,6 +4,7 @@
     <string name="nav_accounts">Accounts</string>
     <string name="nav_inbox">Inbox</string>
     <string name="nav_categories">Categories</string>
+    <string name="nav_reports">Reports</string>
     <string name="nav_more">More</string>
     <string name="empty_accounts">No accounts on this phone yet.\nTap Sync to download from R2Finance cloud.</string>
     <string name="empty_register">No transactions in this account.</string>

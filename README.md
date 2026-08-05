@@ -26,6 +26,7 @@ Android (Room)  ◄── HTTPS ──►  R2FinanceAPI + DynamoDB  ◄── ba
 | **2** | ~~On-device YNAB import~~ **removed** — import/sync is server-side only |
 | **3** | Bidirectional sync via R2FinanceAPI ↔ YNAB (backend) |
 | **3b** | **Categorize spending** on Inbox + Register (tap row / Categorize) → API → YNAB; YNAB categories pull back into Room |
+| **3c** | **Reports** — YNAB-style analytics: month / year / all-time, by category·group·payee·account, income vs expense trends |
 | **4** | Cut the cord from YNAB on the backend |
 
 See [docs/PHASED_PLAN.md](docs/PHASED_PLAN.md).
