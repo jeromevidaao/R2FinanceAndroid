@@ -1,5 +1,6 @@
 package com.cleaningbutton.r2finance.ui.register
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -40,6 +41,7 @@ import com.cleaningbutton.r2finance.data.AppContainer
 import com.cleaningbutton.r2finance.data.local.entity.AccountEntity
 import com.cleaningbutton.r2finance.data.repository.TransactionRow
 import com.cleaningbutton.r2finance.domain.Money
+import com.cleaningbutton.r2finance.ui.categorize.CategorizeDialog
 import java.time.LocalDate
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
@@ -57,6 +59,8 @@ fun RegisterScreen(
     var payee by remember { mutableStateOf("") }
     var amountText by remember { mutableStateOf("") }
     var memo by remember { mutableStateOf("") }
+    var categorizeTarget by remember { mutableStateOf<TransactionRow?>(null) }
+    var statusMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(accountId) {
         account = container.ledger.getAccount(accountId)
@@ -108,11 +112,40 @@ fun RegisterScreen(
                     .padding(padding),
                 contentPadding = PaddingValues(vertical = 8.dp),
             ) {
+                statusMessage?.let { msg ->
+                    item {
+                        Text(
+                            msg,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
+                    }
+                }
                 items(txns, key = { it.txn.id }) { row ->
-                    TransactionRowItem(row)
+                    TransactionRowItem(
+                        row = row,
+                        onCategorize = {
+                            if (row.txn.transferAccountId == null) {
+                                categorizeTarget = row
+                            }
+                        },
+                    )
                 }
             }
         }
+    }
+
+    val target = categorizeTarget
+    val pid = planId
+    if (target != null && pid != null) {
+        CategorizeDialog(
+            container = container,
+            planId = pid,
+            target = target,
+            onDismiss = { categorizeTarget = null },
+            onDone = { msg -> statusMessage = msg },
+        )
     }
 
     if (showAdd) {
@@ -177,9 +210,17 @@ fun RegisterScreen(
 }
 
 @Composable
-private fun TransactionRowItem(row: TransactionRow) {
+private fun TransactionRowItem(
+    row: TransactionRow,
+    onCategorize: () -> Unit,
+) {
     val txn = row.txn
+    val uncategorized = txn.categoryId == null && txn.transferAccountId == null
     ListItem(
+        modifier = Modifier.clickable(
+            enabled = txn.transferAccountId == null,
+            onClick = onCategorize,
+        ),
         headlineContent = {
             Text(row.payeeName ?: "No payee")
         },
@@ -195,24 +236,37 @@ private fun TransactionRowItem(row: TransactionRow) {
                             append(if (txn.approved) txn.cleared.name else "unapproved")
                             when {
                                 row.categoryName != null -> append(" · ${row.categoryName}")
-                                txn.approved -> append(" · uncategorized")
+                                uncategorized -> append(" · uncategorized · tap to set")
+                                txn.transferAccountId != null -> append(" · transfer")
                             }
                         },
                         style = MaterialTheme.typography.labelSmall,
+                        color = if (uncategorized) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                     )
                 }
                 txn.memo?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
         },
         trailingContent = {
-            Text(
-                Money.format(txn.amountMilli),
-                color = if (txn.amountMilli < 0) {
-                    MaterialTheme.colorScheme.error
-                } else {
-                    MaterialTheme.colorScheme.primary
-                },
-            )
+            Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
+                Text(
+                    Money.format(txn.amountMilli),
+                    color = if (txn.amountMilli < 0) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                )
+                if (txn.transferAccountId == null) {
+                    TextButton(onClick = onCategorize) {
+                        Text(if (uncategorized) "Categorize" else "Edit")
+                    }
+                }
+            }
         },
     )
 }

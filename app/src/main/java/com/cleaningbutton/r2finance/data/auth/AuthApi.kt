@@ -42,6 +42,14 @@ data class MfaSetupResponse(
     val error: String? = null,
 )
 
+@Serializable
+data class ForgotPasswordResponse(
+    val ok: Boolean = false,
+    val message: String? = null,
+    val website: String? = null,
+    val error: String? = null,
+)
+
 class AuthApi(
     private val baseUrl: String = BuildConfig.API_BASE_URL,
     private val client: OkHttpClient = OkHttpClient.Builder()
@@ -95,6 +103,14 @@ class AuthApi(
             "/v1/auth/mfa/verify",
             """{"mfaToken":${mfaToken.q()},"code":${code.q()}}""",
             AuthLoginResponse.serializer(),
+        )
+
+    /** Sends email with link to finance.i-liquid.be reset page. */
+    suspend fun forgotPassword(email: String): ForgotPasswordResponse =
+        post(
+            "/v1/auth/forgot-password",
+            """{"email":${email.q()}}""",
+            ForgotPasswordResponse.serializer(),
         )
 
     private suspend fun <T> post(

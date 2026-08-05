@@ -4,13 +4,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -36,9 +34,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cleaningbutton.r2finance.R
 import com.cleaningbutton.r2finance.data.AppContainer
 import com.cleaningbutton.r2finance.data.cloud.SyncCoordinator
-import com.cleaningbutton.r2finance.data.local.entity.CategoryEntity
 import com.cleaningbutton.r2finance.data.repository.TransactionRow
 import com.cleaningbutton.r2finance.domain.Money
+import com.cleaningbutton.r2finance.ui.categorize.CategorizeDialog
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -46,7 +44,6 @@ import kotlinx.coroutines.launch
 fun InboxScreen(container: AppContainer) {
     val scope = rememberCoroutineScope()
     var planId by remember { mutableStateOf(SyncCoordinator.DEFAULT_PLAN_ID) }
-    var categories by remember { mutableStateOf<List<CategoryEntity>>(emptyList()) }
     var categorizeTarget by remember { mutableStateOf<TransactionRow?>(null) }
     var inboxRefreshing by remember { mutableStateOf(false) }
     var refreshMessage by remember { mutableStateOf<String?>(null) }
@@ -55,12 +52,9 @@ fun InboxScreen(container: AppContainer) {
     val hydrating by sync.isSyncing.collectAsStateWithLifecycle()
     val syncMessage by sync.statusMessage.collectAsStateWithLifecycle()
 
-    // Local-first: Room inbox immediately; hydrate only if DB empty. No re-download on tab revisit.
     LaunchedEffect(Unit) {
         planId = container.ledger.ensureDefaultPlan().id
-        categories = container.ledger.listAssignableCategories(planId)
         sync.ensureHydrated(planId)
-        categories = container.ledger.listAssignableCategories(planId)
     }
 
     val items by remember(planId) {
@@ -75,7 +69,6 @@ fun InboxScreen(container: AppContainer) {
             runCatching {
                 container.cloudSync.pullInbox { step -> refreshMessage = step }
             }.onSuccess { report ->
-                categories = container.ledger.listAssignableCategories(planId)
                 refreshMessage =
                     "Inbox: ${report.inboxCount} needs attention " +
                         "(${report.transactions} rows loaded)"
@@ -177,6 +170,8 @@ fun InboxScreen(container: AppContainer) {
                     }
                     items(items, key = { it.txn.id }) { row ->
                         val txn = row.txn
+                        val needsCat = txn.categoryId == null ||
+                            row.categoryName.equals("Uncategorized", true)
                         ListItem(
                             headlineContent = {
                                 Text(row.payeeName ?: "No payee")
@@ -189,13 +184,12 @@ fun InboxScreen(container: AppContainer) {
                                         append(txn.date)
                                         append(" · ")
                                         append(Money.format(txn.amountMilli))
-                                        append(
-                                            when {
-                                                !txn.approved -> " · needs approval"
-                                                txn.categoryId == null -> " · uncategorized"
-                                                else -> " · uncategorized"
-                                            },
-                                        )
+                                        when {
+                                            !txn.approved -> append(" · needs approval")
+                                            needsCat -> append(" · uncategorized")
+                                            row.categoryName != null ->
+                                                append(" · ${row.categoryName}")
+                                        }
                                     },
                                 )
                             },
@@ -205,7 +199,6 @@ fun InboxScreen(container: AppContainer) {
                                         TextButton(
                                             onClick = {
                                                 scope.launch {
-                                                    // Local-first so list updates instantly offline.
                                                     container.ledger.approve(txn.id)
                                                     val id = txn.ynabId ?: txn.id
                                                     runCatching {
@@ -218,11 +211,9 @@ fun InboxScreen(container: AppContainer) {
                                             },
                                         ) { Text("Approve") }
                                     }
-                                    if (txn.categoryId == null ||
-                                        row.categoryName.equals("Uncategorized", true)
-                                    ) {
+                                    if (txn.transferAccountId == null) {
                                         TextButton(onClick = { categorizeTarget = row }) {
-                                            Text("Categorize")
+                                            Text(if (needsCat) "Categorize" else "Edit cat")
                                         }
                                     }
                                 }
@@ -236,50 +227,12 @@ fun InboxScreen(container: AppContainer) {
 
     val target = categorizeTarget
     if (target != null) {
-        AlertDialog(
-            onDismissRequest = { categorizeTarget = null },
-            title = { Text("Choose category") },
-            text = {
-                if (categories.isEmpty()) {
-                    Text(
-                        "No categories yet. Sync from cloud, or wait for YNAB categories " +
-                            "to appear in R2Finance.",
-                    )
-                } else {
-                    LazyColumn {
-                        items(categories, key = { it.id }) { cat ->
-                            TextButton(
-                                modifier = Modifier.fillMaxWidth(),
-                                onClick = {
-                                    scope.launch {
-                                        // Room first (instant), then push to cloud / YNAB.
-                                        container.ledger.setCategory(target.txn.id, cat.id)
-                                        categorizeTarget = null
-                                        categories =
-                                            container.ledger.listAssignableCategories(planId)
-                                        val txnId = target.txn.ynabId ?: target.txn.id
-                                        val catId = cat.ynabId ?: cat.id
-                                        runCatching {
-                                            container.cloudApi.categorize(
-                                                ynabTxnId = txnId,
-                                                categoryYnabId = catId,
-                                                approved = true,
-                                                push = true,
-                                            )
-                                        }.onFailure {
-                                            refreshMessage =
-                                                "Saved locally; cloud categorize later: ${it.message}"
-                                        }
-                                    }
-                                },
-                            ) { Text(cat.name) }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { categorizeTarget = null }) { Text("Close") }
-            },
+        CategorizeDialog(
+            container = container,
+            planId = planId,
+            target = target,
+            onDismiss = { categorizeTarget = null },
+            onDone = { msg -> refreshMessage = msg },
         )
     }
 }

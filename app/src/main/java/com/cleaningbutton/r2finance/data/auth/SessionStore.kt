@@ -3,7 +3,15 @@ package com.cleaningbutton.r2finance.data.auth
 import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKeys
+import com.cleaningbutton.r2finance.BuildConfig
 
+/**
+ * Login session survives **app updates** as long as the APK is signed with the same
+ * upload keystore (CI OTA). Data lives in EncryptedSharedPreferences under the app id.
+ *
+ * After an OTA restart we auto-unlock once ([consumePostUpdateUnlock]) so the user is
+ * not forced through password/MFA again.
+ */
 class SessionStore(context: Context) {
     private val prefs = runCatching {
         val alias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
@@ -34,8 +42,15 @@ class SessionStore(context: Context) {
         get() = prefs.getBoolean(KEY_BIO, false)
         set(v) = prefs.edit().putBoolean(KEY_BIO, v).apply()
 
-    /** True after full password+MFA login until process death / logout; biometric reopens. */
-    var unlockedThisInstall: Boolean = false
+    private var lastVersionCode: Int
+        get() = prefs.getInt(KEY_LAST_VC, 0)
+        set(v) = prefs.edit().putInt(KEY_LAST_VC, v).apply()
+
+    /**
+     * In-memory only for this process. After OTA, [onAppStart] may set this true so
+     * we skip fingerprint immediately after update.
+     */
+    var unlockedThisProcess: Boolean = false
 
     fun isSessionValid(): Boolean {
         val t = token
@@ -46,12 +61,52 @@ class SessionStore(context: Context) {
         this.token = token
         this.email = email
         this.expiresAt = expiresAt
-        unlockedThisInstall = true
+        biometricEnabled = true
+        unlockedThisProcess = true
+        lastVersionCode = BuildConfig.VERSION_CODE
     }
 
+    /**
+     * Call once at process start. Returns preferred start phase: "auth" | "bio" | "app".
+     */
+    fun resolveStartPhase(): String {
+        if (!isSessionValid()) {
+            // Still record version so a future update can detect the jump
+            if (lastVersionCode == 0) lastVersionCode = BuildConfig.VERSION_CODE
+            return "auth"
+        }
+
+        val previous = lastVersionCode
+        val current = BuildConfig.VERSION_CODE
+        // OTA just installed a newer build — keep login, skip biometric this open
+        if (previous > 0 && current > previous) {
+            lastVersionCode = current
+            unlockedThisProcess = true
+            return "app"
+        }
+        lastVersionCode = current
+
+        if (unlockedThisProcess) return "app"
+        if (biometricEnabled) return "bio"
+        unlockedThisProcess = true
+        return "app"
+    }
+
+    fun markUnlocked() {
+        unlockedThisProcess = true
+        lastVersionCode = BuildConfig.VERSION_CODE
+    }
+
+    /** Explicit logout only — never call this on biometric cancel. */
     fun clear() {
-        prefs.edit().clear().apply()
-        unlockedThisInstall = false
+        prefs.edit()
+            .remove(KEY_TOKEN)
+            .remove(KEY_EMAIL)
+            .remove(KEY_EXP)
+            // Keep lastVersionCode so we still detect OTA after re-login
+            .apply()
+        unlockedThisProcess = false
+        // biometricEnabled stays true preference; session gone so login required
     }
 
     companion object {
@@ -59,5 +114,6 @@ class SessionStore(context: Context) {
         private const val KEY_EMAIL = "email"
         private const val KEY_EXP = "expiresAt"
         private const val KEY_BIO = "biometric"
+        private const val KEY_LAST_VC = "lastVersionCode"
     }
 }

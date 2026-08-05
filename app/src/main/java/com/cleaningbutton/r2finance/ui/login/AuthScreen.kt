@@ -1,5 +1,7 @@
 package com.cleaningbutton.r2finance.ui.login
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -12,8 +14,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -24,12 +28,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.cleaningbutton.r2finance.BuildConfig
 import com.cleaningbutton.r2finance.data.auth.AuthApi
+import com.cleaningbutton.r2finance.data.auth.AuthException
 import com.cleaningbutton.r2finance.data.auth.SessionStore
 import kotlinx.coroutines.launch
 
@@ -37,10 +43,13 @@ private enum class Step {
     Loading,
     SetPassword,
     Login,
+    ForgotPassword,
     MfaSetup,
     MfaVerify,
     Done,
 }
+
+private const val WEBSITE_HOME = "https://finance.i-liquid.be"
 
 @Composable
 fun AuthScreen(
@@ -50,6 +59,7 @@ fun AuthScreen(
 ) {
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
     val email = BuildConfig.DEFAULT_USER_EMAIL
 
     var step by remember { mutableStateOf(Step.Loading) }
@@ -61,6 +71,7 @@ fun AuthScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var statusLine by remember { mutableStateOf("Checking account…") }
+    var forgotMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         runCatching {
@@ -84,7 +95,6 @@ fun AuthScreen(
     fun saveSession(token: String?, exp: Long?, mail: String?) {
         if (token.isNullOrBlank() || exp == null) return
         sessionStore.saveSession(token, mail ?: email, exp)
-        sessionStore.biometricEnabled = true
         step = Step.Done
         onAuthenticated()
     }
@@ -210,6 +220,61 @@ fun AuthScreen(
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(if (busy) "Signing in…" else "Continue") }
+                TextButton(
+                    enabled = !busy,
+                    onClick = {
+                        error = null
+                        forgotMessage = null
+                        step = Step.ForgotPassword
+                        statusLine = "Reset password via email"
+                    },
+                ) { Text("Forgot password?") }
+            }
+
+            Step.ForgotPassword -> {
+                Text(
+                    "We’ll email a one-time link to $email. Open it on the R2Finance website (finance.i-liquid.be) to choose a new password, then return here to sign in.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.height(12.dp))
+                forgotMessage?.let {
+                    Text(it, color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(8.dp))
+                }
+                Button(
+                    enabled = !busy,
+                    onClick = {
+                        error = null
+                        forgotMessage = null
+                        busy = true
+                        scope.launch {
+                            runCatching {
+                                val res = authApi.forgotPassword(email)
+                                if (res.error != null) throw AuthException(res.error)
+                                forgotMessage = res.message
+                                    ?: "Check your email for a reset link to the R2Finance website."
+                                statusLine = "Email sent — open the website link"
+                            }.onFailure { error = it.message }
+                            busy = false
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(if (busy) "Sending…" else "Email me a reset link") }
+                OutlinedButton(
+                    onClick = {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(WEBSITE_HOME))
+                        context.startActivity(intent)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Open R2Finance website") }
+                TextButton(
+                    onClick = {
+                        error = null
+                        forgotMessage = null
+                        step = Step.Login
+                        statusLine = "Sign in"
+                    },
+                ) { Text("Back to sign in") }
             }
 
             Step.MfaSetup -> {

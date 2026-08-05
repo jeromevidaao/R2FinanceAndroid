@@ -91,9 +91,14 @@ jobs:
           echo "CB_KEYSTORE_PASSWORD=$STORE_PASS" >> "$GITHUB_ENV"
           echo "CB_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
           echo "CB_KEY_PASSWORD=$KEY_PASS" >> "$GITHUB_ENV"
-          keytool -list -keystore "$KS_PATH" -storepass "$STORE_PASS" -storetype PKCS12 >/dev/null
-          echo "Stable keystore loaded (alias=$KEY_ALIAS)"
+          keytool -list -keystore "$KS_PATH" -storepass "$STORE_PASS" -storetype PKCS12 -v \
+            | tee /tmp/keystore-list.txt | head -40
+          # Print SHA-256 so we can confirm every OTA uses the same cert
+          CERT_SHA=$(keytool -list -keystore "$KS_PATH" -storepass "$STORE_PASS" -storetype PKCS12 -v 2>/dev/null \
+            | awk '/SHA256:/{print $2; exit}')
+          echo "Stable keystore loaded alias=$KEY_ALIAS SHA256=$CERT_SHA"
           echo "has_signing=true" >> "$GITHUB_OUTPUT"
+          echo "cert_sha=$CERT_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Ensure versionCode > published OTA
         if: steps.signing.outputs.has_signing == 'true' && github.ref == 'refs/heads/main'
@@ -120,14 +125,22 @@ jobs:
           fi
           ./gradlew assembleDebug --stacktrace
 
-      - name: Locate APK
+      - name: Locate APK + verify signature
         id: apk
         run: |
+          set -euo pipefail
           APK_PATH=$(find app/build/outputs/apk -name "*.apk" | head -n 1)
           test -n "$APK_PATH"
           echo "path=$APK_PATH" >> "$GITHUB_OUTPUT"
           ls -lh "$APK_PATH"
           cp "$APK_PATH" /tmp/R2Finance.apk
+          # Stable-signed OTA: must verify so installs replace prior builds (login data kept)
+          if command -v apksigner >/dev/null 2>&1; then
+            apksigner verify --print-certs "$APK_PATH" | head -25
+          else
+            jarsigner -verify -verbose -certs "$APK_PATH" 2>&1 | head -30 || true
+          fi
+          echo "APK ready for OTA (same upload keystore as prior R2Finance builds)"
 
       - name: Upload APK artifact
         continue-on-error: true

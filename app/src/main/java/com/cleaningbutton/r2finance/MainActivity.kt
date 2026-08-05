@@ -39,7 +39,6 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-    /** Pending update from FCM tap extras (handled after unlock). */
     private var pendingUpdateFromPush: RemoteAppVersion? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -67,16 +66,8 @@ class MainActivity : FragmentActivity() {
         setContent {
             R2FinanceTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    var phase by remember {
-                        mutableStateOf(
-                            when {
-                                !session.isSessionValid() -> "auth"
-                                session.unlockedThisInstall -> "app"
-                                session.biometricEnabled -> "bio"
-                                else -> "app"
-                            },
-                        )
-                    }
+                    // resolveStartPhase: keeps login across OTA; skips bio after update
+                    var phase by remember { mutableStateOf(session.resolveStartPhase()) }
                     var forceUpdate by remember { mutableStateOf(pendingUpdateFromPush) }
 
                     when (phase) {
@@ -84,6 +75,7 @@ class MainActivity : FragmentActivity() {
                             authApi = app.container.authApi,
                             sessionStore = session,
                             onAuthenticated = {
+                                session.markUnlocked()
                                 PushRegistration.subscribeAndRegister(this@MainActivity)
                                 phase = "app"
                             },
@@ -99,15 +91,17 @@ class MainActivity : FragmentActivity() {
                                 BiometricGate.prompt(
                                     activity = this@MainActivity,
                                     onSuccess = {
-                                        session.unlockedThisInstall = true
+                                        session.markUnlocked()
                                         phase = "app"
                                     },
                                     onCancel = {
-                                        session.clear()
-                                        phase = "auth"
+                                        // Stay on bio — do NOT clear session (would force full re-login)
+                                        // User can try again by reopening app
+                                        finish()
                                     },
                                     onFail = {
-                                        session.unlockedThisInstall = true
+                                        // Soft fail → enter app with valid session
+                                        session.markUnlocked()
                                         phase = "app"
                                     },
                                 )
@@ -129,8 +123,6 @@ class MainActivity : FragmentActivity() {
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        // If already unlocked, UpdateGate will pick up on next composition via recreate path —
-        // simplest: restart activity extras handled next cold open.
     }
 
     private fun remoteFromIntent(intent: android.content.Intent?): RemoteAppVersion? {

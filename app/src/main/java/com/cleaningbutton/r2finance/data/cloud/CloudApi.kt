@@ -130,6 +130,7 @@ data class CloudMarked(
 data class CloudPushResult(
     val pushed: Int = 0,
     val failed: Int = 0,
+    val error: String? = null,
 )
 
 @Serializable

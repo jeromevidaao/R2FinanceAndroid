@@ -143,6 +143,18 @@ class LedgerRepository(
         }
     }
 
+    /** One-shot category tree for categorize picker headers. */
+    suspend fun listCategoryTree(planId: String): List<CategoryTreeNode> {
+        val groups = categories.listGroups(planId)
+        val cats = categories.listCategories(planId)
+        return groups.map { g ->
+            CategoryTreeNode(
+                group = g,
+                categories = cats.filter { it.categoryGroupId == g.id },
+            )
+        }
+    }
+
     suspend fun listCategories(planId: String): List<CategoryEntity> =
         categories.listCategories(planId)
 
