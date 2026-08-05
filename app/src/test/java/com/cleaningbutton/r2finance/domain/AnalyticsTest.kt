@@ -87,7 +87,9 @@ class AnalyticsTest {
                 periodKey = "all",
             )
         assertEquals(2, report.yearlyTrend.size)
-        assertEquals(-2500L, report.outflowMilli)
+        assertEquals(-3000L, report.outflowMilli)
+        assertEquals(500L, report.inflowMilli)
+        assertEquals(-2500L, report.netMilli)
     }
 
     @Test
