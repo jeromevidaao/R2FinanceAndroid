@@ -5,8 +5,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
 @Serializable
@@ -73,8 +75,8 @@ data class CloudTransactionsResponse(val transactions: List<CloudTransaction> = 
 data class CloudTransaction(
     val ynabId: String,
     val accountId: String,
-    val date: String,
-    val amount: Long,
+    val date: String = "",
+    val amount: Long = 0,
     val payeeId: String? = null,
     val categoryId: String? = null,
     val memo: String? = null,
@@ -85,6 +87,11 @@ data class CloudTransaction(
     val transferTransactionId: String? = null,
     val importId: String? = null,
     val subtransactions: List<CloudSubTransaction> = emptyList(),
+    /** Present on /v1/inbox only. */
+    val accountName: String? = null,
+    val payeeName: String? = null,
+    val reason: String? = null,
+    val onBudget: Boolean? = null,
 )
 
 @Serializable
@@ -96,6 +103,62 @@ data class CloudSubTransaction(
     val memo: String? = null,
 )
 
+@Serializable
+data class CloudInboxResponse(
+    val count: Int = 0,
+    val unapproved: Int = 0,
+    val uncategorized: Int = 0,
+    val transactions: List<CloudTransaction> = emptyList(),
+)
+
+@Serializable
+data class CloudMutationResponse(
+    val marked: CloudMarked? = null,
+    val push: CloudPushResult? = null,
+    val error: String? = null,
+)
+
+@Serializable
+data class CloudMarked(
+    val ok: Boolean = false,
+    val ynabTxnId: String? = null,
+    val categoryYnabId: String? = null,
+    val approved: Boolean? = null,
+)
+
+@Serializable
+data class CloudPushResult(
+    val pushed: Int = 0,
+    val failed: Int = 0,
+)
+
+@Serializable
+data class CloudSyncTickResponse(
+    val pull: CloudPullResult? = null,
+    val push: CloudPushResult? = null,
+)
+
+@Serializable
+data class CloudPullResult(
+    val mode: String? = null,
+    val itemsUpserted: Int = 0,
+    val serverKnowledge: Long = 0,
+)
+
+@Serializable
+private data class CategorizeRequest(
+    val ynabTxnId: String,
+    val categoryYnabId: String,
+    val approved: Boolean = true,
+    val push: Boolean = true,
+)
+
+@Serializable
+private data class ApproveRequest(
+    val ynabTxnId: String,
+    val push: Boolean = true,
+)
+
 class CloudApi(
     private val baseUrl: String = BuildConfig.API_BASE_URL,
     private val client: OkHttpClient = OkHttpClient.Builder()
@@ -104,6 +167,7 @@ class CloudApi(
         .build(),
 ) {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+    private val mediaJson = "application/json; charset=utf-8".toMediaType()
 
     suspend fun getPlan(): CloudPlan =
         get("/v1/plan", CloudPlanResponse.serializer()).plan ?: CloudPlan()
@@ -120,12 +184,59 @@ class CloudApi(
     suspend fun getTransactions(): List<CloudTransaction> =
         get("/v1/transactions", CloudTransactionsResponse.serializer()).transactions
 
+    suspend fun getInbox(): CloudInboxResponse =
+        get("/v1/inbox", CloudInboxResponse.serializer())
+
+    /** Pull YNAB → DDB then push pending DDB → YNAB. */
+    suspend fun syncTick(): CloudSyncTickResponse =
+        post("/v1/sync/tick", "{}", CloudSyncTickResponse.serializer())
+
+    suspend fun categorize(
+        ynabTxnId: String,
+        categoryYnabId: String,
+        approved: Boolean = true,
+        push: Boolean = true,
+    ): CloudMutationResponse {
+        val payload = json.encodeToString(
+            CategorizeRequest.serializer(),
+            CategorizeRequest(ynabTxnId, categoryYnabId, approved, push),
+        )
+        return post("/v1/transactions/categorize", payload, CloudMutationResponse.serializer())
+    }
+
+    suspend fun approve(ynabTxnId: String, push: Boolean = true): CloudMutationResponse {
+        val payload = json.encodeToString(
+            ApproveRequest.serializer(),
+            ApproveRequest(ynabTxnId, push),
+        )
+        return post("/v1/transactions/approve", payload, CloudMutationResponse.serializer())
+    }
+
     private suspend fun <T> get(
         path: String,
         deserializer: kotlinx.serialization.DeserializationStrategy<T>,
     ): T = withContext(Dispatchers.IO) {
         val url = baseUrl.trimEnd('/') + path
         val req = Request.Builder().url(url).get().build()
+        client.newCall(req).execute().use { resp ->
+            val body = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                error("Cloud API HTTP ${resp.code}: ${body.take(200)}")
+            }
+            json.decodeFromString(deserializer, body)
+        }
+    }
+
+    private suspend fun <T> post(
+        path: String,
+        jsonBody: String,
+        deserializer: kotlinx.serialization.DeserializationStrategy<T>,
+    ): T = withContext(Dispatchers.IO) {
+        val url = baseUrl.trimEnd('/') + path
+        val req = Request.Builder()
+            .url(url)
+            .post(jsonBody.toRequestBody(mediaJson))
+            .build()
         client.newCall(req).execute().use { resp ->
             val body = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) {

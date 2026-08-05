@@ -5,6 +5,7 @@ import com.cleaningbutton.r2finance.data.auth.AuthApi
 import com.cleaningbutton.r2finance.data.auth.SessionStore
 import com.cleaningbutton.r2finance.data.cloud.CloudApi
 import com.cleaningbutton.r2finance.data.cloud.CloudSync
+import com.cleaningbutton.r2finance.data.cloud.SyncCoordinator
 import com.cleaningbutton.r2finance.data.local.R2FinanceDatabase
 import com.cleaningbutton.r2finance.data.repository.LedgerRepository
 import com.cleaningbutton.r2finance.update.AppUpdateChecker
@@ -18,4 +19,6 @@ class AppContainer(context: Context) {
     val authApi: AuthApi = AuthApi()
     val cloudApi: CloudApi = CloudApi()
     val cloudSync: CloudSync = CloudSync(database, cloudApi)
+    /** Process-scoped: Room is source of truth; cloud pull is hydrate/refresh only. */
+    val syncCoordinator: SyncCoordinator = SyncCoordinator(appContext, database, cloudSync)
 }

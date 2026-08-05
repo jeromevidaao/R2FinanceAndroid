@@ -3,6 +3,7 @@
 - Product: **R2Finance** (spend tracking, not envelope budgeting).
 - Companion: **R2FinanceAPI** (Lambda + DDB + API GW only).
 - **Android never calls YNAB.** Cloud only: Room ↔ R2FinanceAPI (DDB). YNAB sync is backend-only until cutover.
+- **Local-first:** UI always observes Room. `SyncCoordinator` hydrates only when Room is empty; never re-pull on every Accounts visit. Manual refresh is explicit.
 - Keep entity field `ynabId` — it is the stable remote/DDB key name from the API, not an on-device YNAB client.
 - **Always commit + push** after finished work; watch CI green before claiming OTA shipped.
 - OTA prefix: `r2finance-builds/` — not Play Store.

@@ -40,6 +40,14 @@ interface AccountDao {
     @Query("SELECT * FROM accounts WHERE planId = :planId AND deleted = 0 AND closed = 0 ORDER BY name")
     fun observeOpenAccounts(planId: String): Flow<List<AccountEntity>>
 
+    @Query(
+        """
+        SELECT COUNT(*) FROM accounts
+        WHERE planId = :planId AND deleted = 0 AND closed = 0
+        """,
+    )
+    suspend fun countOpen(planId: String): Int
+
     @Query("SELECT * FROM accounts WHERE id = :id LIMIT 1")
     suspend fun getById(id: String): AccountEntity?
 
@@ -84,6 +92,9 @@ interface CategoryDao {
 
     @Query("SELECT * FROM categories WHERE planId = :planId AND deleted = 0 AND hidden = 0 ORDER BY name")
     suspend fun listCategories(planId: String): List<CategoryEntity>
+
+    @Query("SELECT * FROM category_groups WHERE planId = :planId AND deleted = 0 ORDER BY sortOrder, name")
+    suspend fun listGroups(planId: String): List<CategoryGroupEntity>
 }
 
 @Dao
@@ -124,6 +135,12 @@ interface TransactionDao {
     )
     fun observeByAccount(accountId: String): Flow<List<TransactionEntity>>
 
+    /**
+     * YNAB-style needs-attention:
+     * - unapproved (always, including transfers)
+     * - on-budget, no category, not a transfer, no splits
+     * - on-budget, category named Uncategorized
+     */
     @Query(
         """
         SELECT t.* FROM transactions t
@@ -133,10 +150,19 @@ interface TransactionDao {
             t.approved = 0
             OR (
               a.onBudget = 1
-              AND t.categoryId IS NULL
+              AND t.transferAccountId IS NULL
               AND NOT EXISTS (
                 SELECT 1 FROM subtransactions s
                 WHERE s.transactionId = t.id AND s.deleted = 0
+              )
+              AND (
+                t.categoryId IS NULL
+                OR t.categoryId IN (
+                  SELECT c.id FROM categories c
+                  WHERE c.planId = :planId
+                    AND c.deleted = 0
+                    AND LOWER(c.name) = 'uncategorized'
+                )
               )
             )
           )
@@ -164,6 +190,14 @@ interface TransactionDao {
 
     @Query("SELECT * FROM transactions WHERE id = :id LIMIT 1")
     suspend fun getById(id: String): TransactionEntity?
+
+    @Query(
+        """
+        SELECT id FROM transactions
+        WHERE planId = :planId AND syncStatus = 'PENDING_PUSH' AND deleted = 0
+        """,
+    )
+    suspend fun pendingPushIds(planId: String): List<String>
 
     @Query("SELECT * FROM transactions WHERE ynabId = :ynabId LIMIT 1")
     suspend fun getByYnabId(ynabId: String): TransactionEntity?

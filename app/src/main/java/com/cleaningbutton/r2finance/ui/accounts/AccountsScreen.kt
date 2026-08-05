@@ -38,10 +38,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cleaningbutton.r2finance.data.AppContainer
+import com.cleaningbutton.r2finance.data.cloud.SyncCoordinator
 import com.cleaningbutton.r2finance.data.repository.AccountWithBalance
 import com.cleaningbutton.r2finance.domain.AccountType
 import com.cleaningbutton.r2finance.domain.Money
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -51,45 +51,34 @@ fun AccountsScreen(
     onOpenAccount: (String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    var planId by remember { mutableStateOf<String?>(null) }
+    // Stable plan id so Room Flow is subscribed on first frame (no null → empty flash).
+    var planId by remember { mutableStateOf(SyncCoordinator.DEFAULT_PLAN_ID) }
     var showAdd by remember { mutableStateOf(false) }
     var newName by remember { mutableStateOf("") }
-    var syncing by remember { mutableStateOf(false) }
-    var syncMessage by remember { mutableStateOf<String?>(null) }
-    var autoSynced by remember { mutableStateOf(false) }
 
-    fun pullFromCloud() {
-        if (syncing) return
-        scope.launch {
-            syncing = true
-            syncMessage = "Syncing from cloud…"
-            runCatching {
-                container.cloudSync.pullAll { step -> syncMessage = step }
-            }.onSuccess { report ->
-                planId = "default"
-                syncMessage =
-                    "Synced “${report.planName}”: ${report.accounts} accounts, " +
-                        "${report.transactions} transactions"
-            }.onFailure {
-                syncMessage = "Sync failed: ${it.message}"
-            }
-            syncing = false
-        }
-    }
+    val sync = container.syncCoordinator
+    val syncing by sync.isSyncing.collectAsStateWithLifecycle()
+    val syncMessage by sync.statusMessage.collectAsStateWithLifecycle()
 
+    // Local-first: Room is always the UI source. Hydrate from DDB only when empty.
+    // Process-scoped SyncCoordinator survives navigate → register → back (no re-download).
     LaunchedEffect(Unit) {
         planId = container.ledger.ensureDefaultPlan().id
-        if (!autoSynced) {
-            autoSynced = true
-            pullFromCloud()
-        }
+        sync.ensureHydrated(planId)
     }
 
     val accounts by remember(planId) {
-        planId?.let { container.ledger.observeAccountsWithBalances(it) } ?: flowOf(emptyList())
+        container.ledger.observeAccountsWithBalances(planId)
     }.collectAsStateWithLifecycle(initialValue = emptyList())
 
     val openAccounts = accounts.filter { !it.account.closed }
+
+    fun refreshFromCloud() {
+        if (syncing) return
+        scope.launch {
+            sync.refresh(planId)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -98,7 +87,7 @@ fun AccountsScreen(
                 actions = {
                     IconButton(
                         enabled = !syncing,
-                        onClick = { pullFromCloud() },
+                        onClick = { refreshFromCloud() },
                     ) {
                         Icon(Icons.Default.Refresh, contentDescription = "Sync from cloud")
                     }
@@ -112,6 +101,7 @@ fun AccountsScreen(
         },
     ) { padding ->
         when {
+            // Full-screen spinner only on first hydrate when Room is empty.
             syncing && openAccounts.isEmpty() -> {
                 Column(
                     modifier = Modifier
@@ -142,8 +132,8 @@ fun AccountsScreen(
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Text(
-                        text = "Your YNAB data is already in the cloud (R2Finance). " +
-                            "Tap Sync to download accounts and transactions.",
+                        text = "Your ledger lives on this device (Room). " +
+                            "Tap Sync to download accounts and transactions from the cloud once.",
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(top = 8.dp),
                     )
@@ -157,7 +147,7 @@ fun AccountsScreen(
                         )
                     }
                     TextButton(
-                        onClick = { pullFromCloud() },
+                        onClick = { refreshFromCloud() },
                         modifier = Modifier.padding(top = 16.dp),
                     ) {
                         Text("Sync from cloud")
@@ -167,7 +157,7 @@ fun AccountsScreen(
             else -> {
                 Column(modifier = Modifier.padding(padding)) {
                     val msg = syncMessage
-                    if (msg != null) {
+                    if (msg != null && (syncing || msg.startsWith("Sync"))) {
                         Text(
                             text = msg,
                             style = MaterialTheme.typography.labelSmall,
@@ -201,7 +191,7 @@ fun AccountsScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        val pid = planId ?: return@TextButton
+                        val pid = planId
                         val name = newName.trim()
                         if (name.isEmpty()) return@TextButton
                         scope.launch {

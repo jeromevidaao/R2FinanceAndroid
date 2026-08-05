@@ -22,6 +22,7 @@ data class CloudSyncReport(
     val categories: Int,
     val payees: Int,
     val transactions: Int,
+    val inboxCount: Int = 0,
 )
 
 /**
@@ -32,6 +33,21 @@ class CloudSync(
     private val db: R2FinanceDatabase,
     private val api: CloudApi = CloudApi(),
 ) {
+    /**
+     * Refresh YNAB↔DDB on the server, then hydrate Room (accounts/categories/payees/txns + inbox).
+     */
+    suspend fun syncFromCloud(
+        pullYnab: Boolean = true,
+        onProgress: (String) -> Unit = {},
+    ): CloudSyncReport = withContext(Dispatchers.IO) {
+        if (pullYnab) {
+            onProgress("Syncing with YNAB…")
+            runCatching { api.syncTick() }
+                .onFailure { /* still hydrate from last DDB snapshot */ }
+        }
+        pullAll(onProgress)
+    }
+
     suspend fun pullAll(onProgress: (String) -> Unit = {}): CloudSyncReport =
         withContext(Dispatchers.IO) {
             val now = System.currentTimeMillis()
@@ -70,8 +86,6 @@ class CloudSync(
                 },
             )
 
-            // Seed balance via synthetic opening adjustment when no txns yet —
-            // real balances come from transactions below.
             onProgress("Categories…")
             val cats = api.getCategories()
             val groupIds = cats.groups.map { it.ynabId }.toSet()
@@ -126,33 +140,20 @@ class CloudSync(
 
             onProgress("Transactions…")
             val txns = api.getTransactions()
-            // Batch upsert
+            // Phone edits marked PENDING_PUSH must not be overwritten by cloud snapshot.
+            val pendingLocal = db.transactionDao().pendingPushIds(planId).toSet()
             val accountIds = accounts.map { it.ynabId }.toSet()
             val entities = mutableListOf<TransactionEntity>()
             val subs = mutableListOf<SubTransactionEntity>()
+            var skippedPending = 0
             for (t in txns) {
                 if (t.accountId !in accountIds) continue
-                entities.add(
-                    TransactionEntity(
-                        id = t.ynabId,
-                        planId = planId,
-                        accountId = t.accountId,
-                        date = t.date,
-                        amountMilli = t.amount,
-                        payeeId = t.payeeId,
-                        categoryId = t.categoryId,
-                        memo = t.memo,
-                        cleared = parseCleared(t.cleared),
-                        approved = t.approved,
-                        flagColor = parseFlag(t.flagColor),
-                        transferAccountId = t.transferAccountId,
-                        transferTransactionId = t.transferTransactionId,
-                        importId = t.importId,
-                        ynabId = t.ynabId,
-                        updatedAt = now,
-                        syncStatus = SyncStatus.SYNCED,
-                    ),
-                )
+                if (t.ynabId.isBlank() || t.date.isBlank()) continue
+                if (t.ynabId in pendingLocal) {
+                    skippedPending++
+                    continue
+                }
+                entities.add(toEntity(t, planId, now))
                 for (s in t.subtransactions) {
                     subs.add(
                         SubTransactionEntity(
@@ -168,12 +169,30 @@ class CloudSync(
                     )
                 }
             }
+            if (skippedPending > 0) {
+                onProgress("Kept $skippedPending local pending edit(s)…")
+            }
             entities.chunked(200).forEach { chunk ->
                 db.transactionDao().upsertAll(chunk)
             }
             if (subs.isNotEmpty()) {
                 subs.chunked(200).forEach { chunk ->
                     db.transactionDao().upsertSubs(chunk)
+                }
+            }
+
+            // Always merge lightweight inbox snapshot so unapproved/uncategorized land
+            // even if full txn parse dropped rows or timed out partially.
+            onProgress("Inbox…")
+            val inbox = runCatching { api.getInbox() }.getOrNull()
+            inbox?.transactions?.let { list ->
+                val inboxEntities = list.mapNotNull { t ->
+                    if (t.ynabId.isBlank() || t.accountId !in accountIds) null
+                    else if (t.ynabId in pendingLocal) null
+                    else toEntity(t, planId, now)
+                }
+                inboxEntities.chunked(200).forEach { chunk ->
+                    db.transactionDao().upsertAll(chunk)
                 }
             }
 
@@ -184,8 +203,148 @@ class CloudSync(
                 categories = cats.categories.size,
                 payees = payees.size,
                 transactions = entities.size,
+                inboxCount = inbox?.count ?: 0,
             )
         }
+
+    /**
+     * Fast path for Inbox tab: YNAB tick + accounts/categories + inbox rows only.
+     */
+    suspend fun pullInbox(onProgress: (String) -> Unit = {}): CloudSyncReport =
+        withContext(Dispatchers.IO) {
+            onProgress("Syncing with YNAB…")
+            runCatching { api.syncTick() }
+            val now = System.currentTimeMillis()
+            val planId = "default"
+            onProgress("Accounts & categories…")
+            val planInfo = api.getPlan()
+            db.planDao().upsert(
+                PlanEntity(
+                    id = planId,
+                    name = planInfo.name,
+                    currencyCode = planInfo.currency,
+                    ynabId = planInfo.ynabPlanId,
+                    serverKnowledge = planInfo.serverKnowledge,
+                    updatedAt = now,
+                    syncStatus = SyncStatus.SYNCED,
+                ),
+            )
+            val accounts = api.getAccounts()
+            db.accountDao().upsertAll(
+                accounts.map { a ->
+                    AccountEntity(
+                        id = a.ynabId,
+                        planId = planId,
+                        name = a.name,
+                        type = parseAccountType(a.type),
+                        onBudget = a.onBudget,
+                        closed = a.closed,
+                        note = a.note,
+                        transferPayeeId = a.transferPayeeId,
+                        ynabId = a.ynabId,
+                        updatedAt = now,
+                        syncStatus = SyncStatus.SYNCED,
+                    )
+                },
+            )
+            val cats = api.getCategories()
+            val groupIds = cats.groups.map { it.ynabId }.toSet()
+            db.categoryDao().upsertGroups(
+                cats.groups.mapIndexed { i, g ->
+                    CategoryGroupEntity(
+                        id = g.ynabId,
+                        planId = planId,
+                        name = g.name,
+                        hidden = g.hidden,
+                        sortOrder = i,
+                        ynabId = g.ynabId,
+                        updatedAt = now,
+                        syncStatus = SyncStatus.SYNCED,
+                    )
+                },
+            )
+            db.categoryDao().upsertCategories(
+                cats.categories.mapIndexed { i, c ->
+                    val groupId = c.categoryGroupId?.takeIf { it in groupIds }
+                        ?: cats.groups.firstOrNull()?.ynabId
+                        ?: "uncategorized"
+                    CategoryEntity(
+                        id = c.ynabId,
+                        planId = planId,
+                        categoryGroupId = groupId,
+                        name = c.name,
+                        hidden = c.hidden,
+                        sortOrder = i,
+                        ynabId = c.ynabId,
+                        updatedAt = now,
+                        syncStatus = SyncStatus.SYNCED,
+                    )
+                },
+            )
+            // Resolve payee names for inbox rows
+            val payeeIdsNeeded = mutableSetOf<String>()
+            onProgress("Inbox…")
+            val inbox = api.getInbox()
+            for (t in inbox.transactions) {
+                t.payeeId?.let { payeeIdsNeeded.add(it) }
+            }
+            if (payeeIdsNeeded.isNotEmpty()) {
+                val payees = api.getPayees().filter { it.ynabId in payeeIdsNeeded }
+                db.payeeDao().upsertAll(
+                    payees.map { p ->
+                        PayeeEntity(
+                            id = p.ynabId,
+                            planId = planId,
+                            name = p.name,
+                            transferAccountId = p.transferAccountId,
+                            ynabId = p.ynabId,
+                            updatedAt = now,
+                            syncStatus = SyncStatus.SYNCED,
+                        )
+                    },
+                )
+            }
+            val accountIds = accounts.map { it.ynabId }.toSet()
+            val pendingLocal = db.transactionDao().pendingPushIds(planId).toSet()
+            val entities = inbox.transactions.mapNotNull { t ->
+                if (t.ynabId.isBlank() || t.accountId !in accountIds) null
+                else if (t.ynabId in pendingLocal) null
+                else toEntity(t, planId, now)
+            }
+            entities.chunked(200).forEach { chunk ->
+                db.transactionDao().upsertAll(chunk)
+            }
+            onProgress("Done")
+            CloudSyncReport(
+                planName = planInfo.name,
+                accounts = accounts.size,
+                categories = cats.categories.size,
+                payees = payeeIdsNeeded.size,
+                transactions = entities.size,
+                inboxCount = inbox.count,
+            )
+        }
+
+    private fun toEntity(t: CloudTransaction, planId: String, now: Long): TransactionEntity =
+        TransactionEntity(
+            id = t.ynabId,
+            planId = planId,
+            accountId = t.accountId,
+            date = t.date.ifBlank { "1970-01-01" },
+            amountMilli = t.amount,
+            payeeId = t.payeeId,
+            categoryId = t.categoryId,
+            memo = t.memo,
+            cleared = parseCleared(t.cleared),
+            approved = t.approved,
+            flagColor = parseFlag(t.flagColor),
+            transferAccountId = t.transferAccountId,
+            transferTransactionId = t.transferTransactionId,
+            importId = t.importId,
+            ynabId = t.ynabId,
+            updatedAt = now,
+            syncStatus = SyncStatus.SYNCED,
+        )
 
     private fun parseAccountType(raw: String): AccountType =
         runCatching { AccountType.valueOf(raw) }.getOrDefault(AccountType.checking)

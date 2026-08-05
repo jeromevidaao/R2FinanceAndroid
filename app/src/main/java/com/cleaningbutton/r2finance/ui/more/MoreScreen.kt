@@ -58,9 +58,10 @@ fun MoreScreen(container: AppContainer) {
 
             Text("Data source", style = MaterialTheme.typography.titleMedium)
             Text(
-                "Ledger data comes from R2Finance cloud (DynamoDB via R2FinanceAPI). " +
-                    "Use Accounts → Sync from cloud to refresh this device. " +
-                    "YNAB sync, if any, runs only on the AWS backend — not in this app.",
+                "Day-to-day UI reads local Room on this phone. Cloud (DynamoDB via " +
+                    "R2FinanceAPI) hydrates once when empty and when you tap Sync on Accounts. " +
+                    "Navigating accounts does not re-download. YNAB sync, if any, runs only " +
+                    "on the AWS backend — not in this app.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

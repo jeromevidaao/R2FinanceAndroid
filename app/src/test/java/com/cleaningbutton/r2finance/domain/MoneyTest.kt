@@ -53,6 +53,26 @@ class DomainRulesTest {
                 hasSubtransactions = false,
             ),
         )
+        // Transfers with null category are normal in YNAB — not inbox.
+        assertFalse(
+            DomainRules.isInboxItem(
+                approved = true,
+                onBudget = true,
+                categoryId = null,
+                hasSubtransactions = false,
+                isTransfer = true,
+            ),
+        )
+        // Explicit Internal "Uncategorized" category still needs attention.
+        assertTrue(
+            DomainRules.isInboxItem(
+                approved = true,
+                onBudget = true,
+                categoryId = "uncat-id",
+                hasSubtransactions = false,
+                categoryName = "Uncategorized",
+            ),
+        )
         assertFalse(
             DomainRules.isInboxItem(
                 approved = true,

@@ -11,10 +11,14 @@ object DomainRules {
         onBudget: Boolean,
         categoryId: String?,
         hasSubtransactions: Boolean,
+        isTransfer: Boolean = false,
+        categoryName: String? = null,
     ): Boolean {
         if (!onBudget) return false
         if (hasSubtransactions) return false
-        return categoryId.isNullOrBlank()
+        if (isTransfer) return false
+        if (categoryId.isNullOrBlank()) return true
+        return categoryName?.equals("Uncategorized", ignoreCase = true) == true
     }
 
     fun isInboxItem(
@@ -22,8 +26,16 @@ object DomainRules {
         onBudget: Boolean,
         categoryId: String?,
         hasSubtransactions: Boolean,
+        isTransfer: Boolean = false,
+        categoryName: String? = null,
     ): Boolean {
         if (!approved) return true
-        return isUncategorizedOnBudget(onBudget, categoryId, hasSubtransactions)
+        return isUncategorizedOnBudget(
+            onBudget = onBudget,
+            categoryId = categoryId,
+            hasSubtransactions = hasSubtransactions,
+            isTransfer = isTransfer,
+            categoryName = categoryName,
+        )
     }
 }

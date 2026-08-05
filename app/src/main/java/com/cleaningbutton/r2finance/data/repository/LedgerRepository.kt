@@ -249,6 +249,7 @@ class LedgerRepository(
         val txn = txns.getById(transactionId) ?: return
         val updated = txn.copy(
             categoryId = categoryId,
+            approved = true,
             updatedAt = System.currentTimeMillis(),
             syncStatus = SyncStatus.PENDING_PUSH,
         )
@@ -270,6 +271,22 @@ class LedgerRepository(
                 syncStatus = SyncStatus.PENDING_PUSH,
             ),
         )
+    }
+
+    /** Categories suitable for the categorize picker (hide internal / CC payments / hidden). */
+    suspend fun listAssignableCategories(planId: String): List<CategoryEntity> {
+        val groups = categories.listGroups(planId).associateBy { it.id }
+        return categories.listCategories(planId).filter { cat ->
+            if (cat.hidden || cat.deleted) return@filter false
+            val g = groups[cat.categoryGroupId]
+            if (g?.hidden == true || g?.deleted == true) return@filter false
+            val gName = g?.name.orEmpty()
+            if (gName.equals("Internal Master Category", ignoreCase = true)) return@filter false
+            if (gName.equals("Credit Card Payments", ignoreCase = true)) return@filter false
+            if (cat.name.equals("Uncategorized", ignoreCase = true)) return@filter false
+            if (cat.name.contains("Ready to Assign", ignoreCase = true)) return@filter false
+            true
+        }
     }
 
     suspend fun addSplitTransaction(
