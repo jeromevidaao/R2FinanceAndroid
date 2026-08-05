@@ -13,3 +13,5 @@
 *.aab
 google-services.json
 # Local Firebase config — CI writes from GOOGLE_SERVICES_JSON secret
+__pycache__/
+scripts/__pycache__/
