@@ -18,7 +18,8 @@ class AppContainer(context: Context) {
     val updateChecker: AppUpdateChecker = AppUpdateChecker(appContext)
     val sessionStore: SessionStore = SessionStore(appContext)
     val authApi: AuthApi = AuthApi()
-    val cloudApi: CloudApi = CloudApi()
+    /** All ledger/sync calls send Bearer token from encrypted session store. */
+    val cloudApi: CloudApi = CloudApi(tokenProvider = { sessionStore.token })
     val cloudSync: CloudSync = CloudSync(database, cloudApi)
     /** Process-scoped: Room is source of truth; cloud pull/push is background. */
     val syncCoordinator: SyncCoordinator = SyncCoordinator(appContext, database, cloudSync)

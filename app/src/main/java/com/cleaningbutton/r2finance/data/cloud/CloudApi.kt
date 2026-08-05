@@ -215,8 +215,15 @@ data class DevicePushAccepted(
     val transactions: Int = 0,
 )
 
+/**
+ * Authenticated R2Finance cloud client.
+ *
+ * Every ledger/sync call requires a valid household session (Jerome or Ngoc).
+ * Pass [tokenProvider] so requests include `Authorization: Bearer …`.
+ */
 class CloudApi(
     private val baseUrl: String = BuildConfig.API_BASE_URL,
+    private val tokenProvider: () -> String? = { null },
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(180, TimeUnit.SECONDS)
@@ -277,12 +284,21 @@ class CloudApi(
         return post("/v1/device/push", payload, DevicePushResponse.serializer())
     }
 
+    private fun Request.Builder.applyAuth(): Request.Builder {
+        header("X-R2Finance-Client", "android")
+        val token = tokenProvider()?.trim().orEmpty()
+        if (token.isNotEmpty()) {
+            header("Authorization", "Bearer $token")
+        }
+        return this
+    }
+
     private suspend fun <T> get(
         path: String,
         deserializer: kotlinx.serialization.DeserializationStrategy<T>,
     ): T = withContext(Dispatchers.IO) {
         val url = baseUrl.trimEnd('/') + path
-        val req = Request.Builder().url(url).get().build()
+        val req = Request.Builder().url(url).get().applyAuth().build()
         client.newCall(req).execute().use { resp ->
             val body = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) {
@@ -301,6 +317,7 @@ class CloudApi(
         val req = Request.Builder()
             .url(url)
             .post(jsonBody.toRequestBody(mediaJson))
+            .applyAuth()
             .build()
         client.newCall(req).execute().use { resp ->
             val body = resp.body?.string().orEmpty()
