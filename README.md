@@ -11,11 +11,12 @@ Android (Room)  ◄── HTTPS ──►  R2FinanceAPI + DynamoDB  ◄── ba
 ```
 
 - **This app never calls the YNAB API.** No PAT, no on-device import.
-- Day-to-day UI reads **local Room** only (survives navigate away/back without re-download).
-- **Hydrate** from cloud when Room is empty; **manual refresh** via Accounts → Sync.
-- Process-level `SyncCoordinator` single-flights pulls and skips re-hydrate when data exists.
+- **Offline-first:** UI always reads/writes **Room**. Works for hours with zero network.
+- Local edits → `PENDING_PUSH` → auto **device push to DynamoDB** when online
+  (`POST /v1/device/push` via `ConnectivityMonitor`).
+- Pull DDB → Room after push; **YNAB is backend-only** (EventBridge ~15m / sync tick).
+- Navigate away/back does **not** re-download. Manual Accounts → Sync = push + pull + YNAB tick.
 - Pull preserves local `PENDING_PUSH` rows (phone edits not clobbered by cloud snapshot).
-- YNAB pull/push (if still enabled) runs only in **R2FinanceAPI** Lambdas + Secrets Manager.
 
 ## Phases
 

@@ -58,10 +58,11 @@ fun MoreScreen(container: AppContainer) {
 
             Text("Data source", style = MaterialTheme.typography.titleMedium)
             Text(
-                "Day-to-day UI reads local Room on this phone. Cloud (DynamoDB via " +
-                    "R2FinanceAPI) hydrates once when empty and when you tap Sync on Accounts. " +
-                    "Navigating accounts does not re-download. YNAB sync, if any, runs only " +
-                    "on the AWS backend — not in this app.",
+                "Offline-first: all work is on this phone (Room). While flying / offline, " +
+                    "add, categorize, and approve as usual — changes queue as PENDING_PUSH. " +
+                    "When network returns they upload to DynamoDB automatically; YNAB is " +
+                    "updated later by the AWS backend (≈15 min tick), not by the phone. " +
+                    "Manual Accounts → Sync also push+pull (+ optional YNAB tick).",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

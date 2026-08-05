@@ -31,8 +31,8 @@ import com.cleaningbutton.r2finance.domain.Money
 import kotlinx.coroutines.launch
 
 /**
- * Shared categorize picker: search + grouped categories, local Room first,
- * then POST /v1/transactions/categorize (DDB → YNAB push).
+ * Shared categorize picker: offline-first Room write (PENDING_PUSH).
+ * ConnectivityMonitor / manual Sync uploads to DDB; YNAB is backend later.
  */
 @Composable
 fun CategorizeDialog(
@@ -135,36 +135,22 @@ fun CategorizeDialog(
                                         scope.launch {
                                             busy = true
                                             error = null
-                                            // Room first (instant UI), then cloud → YNAB.
+                                            // Room only — works in airplane mode for hours.
                                             container.ledger.setCategory(target.txn.id, cat.id)
-                                            val txnId = target.txn.ynabId ?: target.txn.id
-                                            val catId = cat.ynabId ?: cat.id
-                                            val cloudResult = runCatching {
-                                                container.cloudApi.categorize(
-                                                    ynabTxnId = txnId,
-                                                    categoryYnabId = catId,
-                                                    approved = true,
-                                                    push = true,
-                                                )
+                                            // Best-effort flush if already online (no UI wait on fail).
+                                            if (container.connectivityMonitor.online.value) {
+                                                runCatching {
+                                                    container.syncCoordinator.syncWhenOnline(planId)
+                                                }
                                             }
                                             busy = false
-                                            if (cloudResult.isFailure) {
-                                                onDone(
-                                                    "Saved locally; cloud/YNAB later: " +
-                                                        cloudResult.exceptionOrNull()?.message,
-                                                )
-                                            } else {
-                                                val push = cloudResult.getOrNull()?.push
-                                                val msg = when {
-                                                    push == null -> "Categorized · ${cat.name}"
-                                                    (push.failed ?: 0) > 0 ->
-                                                        "Saved; YNAB push had failures"
-                                                    (push.pushed ?: 0) > 0 ->
-                                                        "Categorized · ${cat.name} · synced to YNAB"
-                                                    else -> "Categorized · ${cat.name}"
-                                                }
-                                                onDone(msg)
-                                            }
+                                            onDone(
+                                                if (container.connectivityMonitor.online.value) {
+                                                    "Categorized · ${cat.name}"
+                                                } else {
+                                                    "Categorized · ${cat.name} · offline, uploads later"
+                                                },
+                                            )
                                             onDismiss()
                                         }
                                     },

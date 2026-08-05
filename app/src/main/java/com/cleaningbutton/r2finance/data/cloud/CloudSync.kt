@@ -147,9 +147,10 @@ class CloudSync(
             val subs = mutableListOf<SubTransactionEntity>()
             var skippedPending = 0
             for (t in txns) {
+                val stableId = t.stableId()
                 if (t.accountId !in accountIds) continue
-                if (t.ynabId.isBlank() || t.date.isBlank()) continue
-                if (t.ynabId in pendingLocal) {
+                if (stableId.isBlank() || t.date.isBlank()) continue
+                if (stableId in pendingLocal || t.ynabId in pendingLocal) {
                     skippedPending++
                     continue
                 }
@@ -158,7 +159,7 @@ class CloudSync(
                     subs.add(
                         SubTransactionEntity(
                             id = s.ynabId ?: UUID.randomUUID().toString(),
-                            transactionId = t.ynabId,
+                            transactionId = stableId,
                             amountMilli = s.amount,
                             payeeId = s.payeeId,
                             categoryId = s.categoryId,
@@ -187,8 +188,9 @@ class CloudSync(
             val inbox = runCatching { api.getInbox() }.getOrNull()
             inbox?.transactions?.let { list ->
                 val inboxEntities = list.mapNotNull { t ->
-                    if (t.ynabId.isBlank() || t.accountId !in accountIds) null
-                    else if (t.ynabId in pendingLocal) null
+                    val stableId = t.stableId()
+                    if (stableId.isBlank() || t.accountId !in accountIds) null
+                    else if (stableId in pendingLocal || t.ynabId in pendingLocal) null
                     else toEntity(t, planId, now)
                 }
                 inboxEntities.chunked(200).forEach { chunk ->
@@ -307,8 +309,9 @@ class CloudSync(
             val accountIds = accounts.map { it.ynabId }.toSet()
             val pendingLocal = db.transactionDao().pendingPushIds(planId).toSet()
             val entities = inbox.transactions.mapNotNull { t ->
-                if (t.ynabId.isBlank() || t.accountId !in accountIds) null
-                else if (t.ynabId in pendingLocal) null
+                val stableId = t.stableId()
+                if (stableId.isBlank() || t.accountId !in accountIds) null
+                else if (stableId in pendingLocal || t.ynabId in pendingLocal) null
                 else toEntity(t, planId, now)
             }
             entities.chunked(200).forEach { chunk ->
@@ -325,9 +328,86 @@ class CloudSync(
             )
         }
 
-    private fun toEntity(t: CloudTransaction, planId: String, now: Long): TransactionEntity =
-        TransactionEntity(
-            id = t.ynabId,
+    /**
+     * Push local Room PENDING_PUSH payees + transactions into DynamoDB.
+     * Marks them SYNCED on the phone once DDB accepts (YNAB may still be pending server-side).
+     */
+    suspend fun pushLocalPending(
+        planId: String = "default",
+        onProgress: (String) -> Unit = {},
+    ): DevicePushResponse = withContext(Dispatchers.IO) {
+        val pendingTxns = db.transactionDao().listPendingPush(planId)
+        val pendingPayees = db.payeeDao().listPendingPush(planId)
+        if (pendingTxns.isEmpty() && pendingPayees.isEmpty()) {
+            onProgress("Nothing pending")
+            return@withContext DevicePushResponse(ok = true, accepted = DevicePushAccepted())
+        }
+        onProgress("Pushing ${pendingTxns.size} txn(s), ${pendingPayees.size} payee(s)…")
+
+        val payeeNameById = pendingPayees.associate { it.id to it.name }.toMutableMap()
+        // Also resolve names for txn payees already synced
+        for (t in pendingTxns) {
+            val pid = t.payeeId ?: continue
+            if (pid !in payeeNameById) {
+                db.payeeDao().getById(pid)?.let { payeeNameById[pid] = it.name }
+            }
+        }
+
+        val request = DevicePushRequest(
+            payees = pendingPayees.map { p ->
+                DevicePushPayee(
+                    clientId = p.id,
+                    name = p.name,
+                    ynabId = p.ynabId,
+                    updatedAt = p.updatedAt,
+                    deleted = p.deleted,
+                )
+            },
+            transactions = pendingTxns.map { t ->
+                DevicePushTransaction(
+                    clientId = t.id,
+                    ynabId = t.ynabId,
+                    accountId = t.accountId,
+                    date = t.date,
+                    amount = t.amountMilli,
+                    payeeId = t.payeeId,
+                    payeeName = t.payeeId?.let { payeeNameById[it] },
+                    categoryId = t.categoryId,
+                    memo = t.memo,
+                    cleared = t.cleared.name,
+                    approved = t.approved,
+                    deleted = t.deleted,
+                    importId = t.importId ?: t.id,
+                    updatedAt = t.updatedAt,
+                )
+            },
+        )
+        val resp = api.devicePush(request)
+        if (!resp.ok && resp.error != null) {
+            error(resp.error)
+        }
+        // Mark successfully landed rows as SYNCED on device (DDB is source of cloud truth).
+        val now = System.currentTimeMillis()
+        for (t in pendingTxns) {
+            db.transactionDao().update(
+                t.copy(syncStatus = SyncStatus.SYNCED, updatedAt = now),
+            )
+        }
+        for (p in pendingPayees) {
+            db.payeeDao().upsert(
+                p.copy(syncStatus = SyncStatus.SYNCED, updatedAt = now),
+            )
+        }
+        onProgress(
+            "Pushed to cloud: ${resp.accepted?.transactions ?: pendingTxns.size} txn(s)",
+        )
+        resp
+    }
+
+    private fun toEntity(t: CloudTransaction, planId: String, now: Long): TransactionEntity {
+        val stableId = t.stableId()
+        return TransactionEntity(
+            id = stableId,
             planId = planId,
             accountId = t.accountId,
             date = t.date.ifBlank { "1970-01-01" },
@@ -340,11 +420,12 @@ class CloudSync(
             flagColor = parseFlag(t.flagColor),
             transferAccountId = t.transferAccountId,
             transferTransactionId = t.transferTransactionId,
-            importId = t.importId,
-            ynabId = t.ynabId,
+            importId = t.importId ?: t.clientId,
+            ynabId = t.ynabId.ifBlank { null } ?: t.clientId,
             updatedAt = now,
             syncStatus = SyncStatus.SYNCED,
         )
+    }
 
     private fun parseAccountType(raw: String): AccountType =
         runCatching { AccountType.valueOf(raw) }.getOrDefault(AccountType.checking)

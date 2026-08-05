@@ -73,8 +73,11 @@ data class CloudTransactionsResponse(val transactions: List<CloudTransaction> = 
 
 @Serializable
 data class CloudTransaction(
-    val ynabId: String,
-    val accountId: String,
+    /** Stable client key (device clientId or YNAB id). */
+    val id: String? = null,
+    val clientId: String? = null,
+    val ynabId: String = "",
+    val accountId: String = "",
     val date: String = "",
     val amount: Long = 0,
     val payeeId: String? = null,
@@ -92,7 +95,12 @@ data class CloudTransaction(
     val payeeName: String? = null,
     val reason: String? = null,
     val onBudget: Boolean? = null,
-)
+) {
+    /** Room / local primary key preference. */
+    fun stableId(): String = id?.takeIf { it.isNotBlank() }
+        ?: clientId?.takeIf { it.isNotBlank() }
+        ?: ynabId
+}
 
 @Serializable
 data class CloudSubTransaction(
@@ -160,6 +168,53 @@ private data class ApproveRequest(
     val push: Boolean = true,
 )
 
+@Serializable
+data class DevicePushPayee(
+    val clientId: String,
+    val name: String,
+    val ynabId: String? = null,
+    val updatedAt: Long? = null,
+    val deleted: Boolean = false,
+)
+
+@Serializable
+data class DevicePushTransaction(
+    val clientId: String,
+    val ynabId: String? = null,
+    val accountId: String,
+    val date: String,
+    val amount: Long,
+    val payeeId: String? = null,
+    val payeeName: String? = null,
+    val categoryId: String? = null,
+    val memo: String? = null,
+    val cleared: String = "uncleared",
+    val approved: Boolean = true,
+    val deleted: Boolean = false,
+    val importId: String? = null,
+    val updatedAt: Long? = null,
+)
+
+@Serializable
+data class DevicePushRequest(
+    val payees: List<DevicePushPayee> = emptyList(),
+    val transactions: List<DevicePushTransaction> = emptyList(),
+)
+
+@Serializable
+data class DevicePushResponse(
+    val ok: Boolean = false,
+    val accepted: DevicePushAccepted? = null,
+    val failed: DevicePushAccepted? = null,
+    val error: String? = null,
+)
+
+@Serializable
+data class DevicePushAccepted(
+    val payees: Int = 0,
+    val transactions: Int = 0,
+)
+
 class CloudApi(
     private val baseUrl: String = BuildConfig.API_BASE_URL,
     private val client: OkHttpClient = OkHttpClient.Builder()
@@ -211,6 +266,15 @@ class CloudApi(
             ApproveRequest(ynabTxnId, push),
         )
         return post("/v1/transactions/approve", payload, CloudMutationResponse.serializer())
+    }
+
+    /**
+     * Land phone Room PENDING_PUSH rows into DynamoDB.
+     * Does **not** wait for YNAB — backend tick/schedule pushes later.
+     */
+    suspend fun devicePush(request: DevicePushRequest): DevicePushResponse {
+        val payload = json.encodeToString(DevicePushRequest.serializer(), request)
+        return post("/v1/device/push", payload, DevicePushResponse.serializer())
     }
 
     private suspend fun <T> get(

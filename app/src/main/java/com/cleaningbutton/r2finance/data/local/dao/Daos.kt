@@ -111,6 +111,15 @@ interface PayeeDao {
     @Query("SELECT * FROM payees WHERE ynabId = :ynabId LIMIT 1")
     suspend fun getByYnabId(ynabId: String): PayeeEntity?
 
+    @Query(
+        """
+        SELECT * FROM payees
+        WHERE planId = :planId AND syncStatus = 'PENDING_PUSH'
+        ORDER BY updatedAt ASC
+        """,
+    )
+    suspend fun listPendingPush(planId: String): List<PayeeEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(payee: PayeeEntity)
 
@@ -198,6 +207,31 @@ interface TransactionDao {
         """,
     )
     suspend fun pendingPushIds(planId: String): List<String>
+
+    @Query(
+        """
+        SELECT * FROM transactions
+        WHERE planId = :planId AND syncStatus = 'PENDING_PUSH'
+        ORDER BY updatedAt ASC
+        """,
+    )
+    suspend fun listPendingPush(planId: String): List<TransactionEntity>
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM transactions
+        WHERE planId = :planId AND syncStatus = 'PENDING_PUSH'
+        """,
+    )
+    suspend fun countPendingPush(planId: String): Int
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM transactions
+        WHERE planId = :planId AND syncStatus = 'PENDING_PUSH'
+        """,
+    )
+    fun observePendingPushCount(planId: String): Flow<Int>
 
     @Query("SELECT * FROM transactions WHERE ynabId = :ynabId LIMIT 1")
     suspend fun getByYnabId(ynabId: String): TransactionEntity?

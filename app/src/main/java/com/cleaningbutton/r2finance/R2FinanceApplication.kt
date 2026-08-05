@@ -11,6 +11,8 @@ class R2FinanceApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        // Offline-first: flush PENDING_PUSH → DDB whenever network is/returns available.
+        container.connectivityMonitor.start()
         PushRegistration.ensureChannel(this)
         PushRegistration.subscribeAndRegister(this)
     }

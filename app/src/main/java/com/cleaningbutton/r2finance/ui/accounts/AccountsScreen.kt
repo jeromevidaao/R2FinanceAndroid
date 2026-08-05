@@ -59,6 +59,8 @@ fun AccountsScreen(
     val sync = container.syncCoordinator
     val syncing by sync.isSyncing.collectAsStateWithLifecycle()
     val syncMessage by sync.statusMessage.collectAsStateWithLifecycle()
+    val pendingCount by sync.pendingCount.collectAsStateWithLifecycle()
+    val online by container.connectivityMonitor.online.collectAsStateWithLifecycle()
 
     // Local-first: Room is always the UI source. Hydrate from DDB only when empty.
     // Process-scoped SyncCoordinator survives navigate → register → back (no re-download).
@@ -156,15 +158,12 @@ fun AccountsScreen(
             }
             else -> {
                 Column(modifier = Modifier.padding(padding)) {
-                    val msg = syncMessage
-                    if (msg != null && (syncing || msg.startsWith("Sync"))) {
-                        Text(
-                            text = msg,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                        )
-                    }
+                    OfflineStatusBanner(
+                        online = online,
+                        pendingCount = pendingCount,
+                        syncing = syncing,
+                        syncMessage = syncMessage,
+                    )
                     LazyColumn(contentPadding = PaddingValues(vertical = 8.dp)) {
                         items(openAccounts, key = { it.account.id }) { row ->
                             AccountRow(row = row, onClick = { onOpenAccount(row.account.id) })
@@ -211,6 +210,40 @@ fun AccountsScreen(
             },
         )
     }
+}
+
+@Composable
+private fun OfflineStatusBanner(
+    online: Boolean,
+    pendingCount: Int,
+    syncing: Boolean,
+    syncMessage: String?,
+) {
+    val text = when {
+        !online && pendingCount > 0 ->
+            "Offline · $pendingCount change(s) saved on phone — will upload when online"
+        !online -> "Offline · working from phone storage"
+        pendingCount > 0 && !syncing ->
+            "$pendingCount change(s) waiting to upload to cloud"
+        syncing -> syncMessage ?: "Syncing…"
+        syncMessage != null && (
+            syncMessage.startsWith("Sync") ||
+                syncMessage.startsWith("Offline") ||
+                syncMessage.startsWith("Upload") ||
+                syncMessage.startsWith("Will retry")
+            ) -> syncMessage
+        else -> null
+    } ?: return
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        color = if (!online) {
+            MaterialTheme.colorScheme.error
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+    )
 }
 
 @Composable

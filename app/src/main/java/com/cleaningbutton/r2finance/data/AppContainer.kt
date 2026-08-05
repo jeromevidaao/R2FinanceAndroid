@@ -5,6 +5,7 @@ import com.cleaningbutton.r2finance.data.auth.AuthApi
 import com.cleaningbutton.r2finance.data.auth.SessionStore
 import com.cleaningbutton.r2finance.data.cloud.CloudApi
 import com.cleaningbutton.r2finance.data.cloud.CloudSync
+import com.cleaningbutton.r2finance.data.cloud.ConnectivityMonitor
 import com.cleaningbutton.r2finance.data.cloud.SyncCoordinator
 import com.cleaningbutton.r2finance.data.local.R2FinanceDatabase
 import com.cleaningbutton.r2finance.data.repository.LedgerRepository
@@ -19,6 +20,14 @@ class AppContainer(context: Context) {
     val authApi: AuthApi = AuthApi()
     val cloudApi: CloudApi = CloudApi()
     val cloudSync: CloudSync = CloudSync(database, cloudApi)
-    /** Process-scoped: Room is source of truth; cloud pull is hydrate/refresh only. */
+    /** Process-scoped: Room is source of truth; cloud pull/push is background. */
     val syncCoordinator: SyncCoordinator = SyncCoordinator(appContext, database, cloudSync)
+
+    /**
+     * Auto-flush offline queue when the network returns.
+     * Started from [com.cleaningbutton.r2finance.R2FinanceApplication].
+     */
+    val connectivityMonitor: ConnectivityMonitor = ConnectivityMonitor(appContext) {
+        syncCoordinator.syncWhenOnline()
+    }
 }

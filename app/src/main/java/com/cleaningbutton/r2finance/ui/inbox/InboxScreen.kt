@@ -199,14 +199,11 @@ fun InboxScreen(container: AppContainer) {
                                         TextButton(
                                             onClick = {
                                                 scope.launch {
+                                                    // Offline-first: Room only. ConnectivityMonitor
+                                                    // pushes PENDING_PUSH → DDB when online.
                                                     container.ledger.approve(txn.id)
-                                                    val id = txn.ynabId ?: txn.id
-                                                    runCatching {
-                                                        container.cloudApi.approve(id)
-                                                    }.onFailure {
-                                                        refreshMessage =
-                                                            "Saved locally; cloud approve later: ${it.message}"
-                                                    }
+                                                    refreshMessage =
+                                                        "Approved on phone — uploads when online"
                                                 }
                                             },
                                         ) { Text("Approve") }
