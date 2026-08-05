@@ -91,8 +91,8 @@ object Analytics {
             .toList()
             .asReversed()
 
-    fun formatPeriodLabel(mode: PeriodMode, key: String): String =
-        when (mode) {
+    fun formatPeriodLabel(mode: PeriodMode, key: String): String {
+        return when (mode) {
             PeriodMode.ALL -> "All time"
             PeriodMode.YEAR -> key
             PeriodMode.MONTH -> {
@@ -108,6 +108,7 @@ object Analytics {
                 "$monthName $y"
             }
         }
+    }
 
     fun defaultPeriodKey(mode: PeriodMode, txns: List<AnalyticsTxn>): String =
         when (mode) {
