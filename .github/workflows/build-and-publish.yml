@@ -103,6 +103,7 @@ jobs:
           cp "$APK_PATH" /tmp/R2Finance.apk
 
       - name: Upload APK artifact
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: R2Finance-apk
