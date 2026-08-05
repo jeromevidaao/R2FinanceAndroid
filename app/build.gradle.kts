@@ -6,6 +6,12 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+// Firebase FCM when google-services.json is present (CI writes from secret/SSM).
+val googleServicesFile = file("google-services.json")
+if (googleServicesFile.exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 // Stable signing so OTA updates install over previous builds (same pattern as R2Android).
 // CI loads PKCS12 from SSM (/android/r2finance/* or shared /android/cleaningbutton/*).
 val uploadStoreFile = System.getenv("R2F_KEYSTORE_PATH")?.let { file(it) }
@@ -30,8 +36,8 @@ android {
         applicationId = "com.cleaningbutton.r2finance"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "0.3.3"
+        versionCode = 8
+        versionName = "0.4.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField(
@@ -132,6 +138,10 @@ dependencies {
     implementation("androidx.security:security-crypto:1.0.0")
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.fragment:fragment-ktx:1.8.5")
+
+    // Firebase Cloud Messaging (OTA update notifications)
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    implementation("com.google.firebase:firebase-messaging-ktx")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")

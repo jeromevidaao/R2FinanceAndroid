@@ -34,6 +34,18 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Write google-services.json (Firebase FCM)
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          set -euo pipefail
+          if [ -n "${GOOGLE_SERVICES_JSON:-}" ]; then
+            printf '%s\n' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+            python3 -c "import json; d=json.load(open('app/google-services.json')); print('google-services ok project=', d.get('project_info',{}).get('project_id'))"
+          else
+            echo "WARN: GOOGLE_SERVICES_JSON secret missing — FCM disabled in this APK"
+          fi
+
       - name: Unit tests
         run: ./gradlew testDebugUnitTest --stacktrace
 
@@ -168,6 +180,11 @@ jobs:
           assert pub["apkUrl"].endswith("R2Finance-latest.apk")
           print("OTA public manifest OK", pub["versionCode"], pub["versionName"])
           PY
+          # FCM topic notify (uses PREV_VERSION_JSON snapshot from ensure-ota step)
+          export PREV_VERSION_JSON=/tmp/prev-version.json
+          pip install --user boto3 google-auth requests -q || pip3 install --user boto3 google-auth requests -q || true
+          python3 scripts/notify-app-update-fcm.py /tmp/version.json || \
+            echo "::warning::FCM app_update notify failed (non-fatal)"
 
       - name: Fail if main OTA missing (production gate)
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

@@ -11,6 +11,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.fragment.app.FragmentActivity
+import com.cleaningbutton.r2finance.BuildConfig
 import com.cleaningbutton.r2finance.data.AppContainer
 import com.cleaningbutton.r2finance.update.RemoteAppVersion
 import com.cleaningbutton.r2finance.update.UpdateCheckResult
@@ -18,10 +19,13 @@ import kotlinx.coroutines.launch
 
 /**
  * Silent OTA check after login. Shows [AppUpdateDialog] when a newer versionCode is published.
+ * [forceRemote] is used when user taps an FCM update notification.
  */
 @Composable
 fun UpdateGate(
     container: AppContainer,
+    forceRemote: RemoteAppVersion? = null,
+    onForceConsumed: () -> Unit = {},
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
@@ -31,7 +35,12 @@ fun UpdateGate(
     var progress by remember { mutableFloatStateOf(0f) }
     var status by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(forceRemote) {
+        if (forceRemote != null && forceRemote.versionCode > BuildConfig.VERSION_CODE) {
+            remote = forceRemote
+            onForceConsumed()
+            return@LaunchedEffect
+        }
         when (val result = container.updateChecker.check()) {
             is UpdateCheckResult.Available -> remote = result.remote
             is UpdateCheckResult.UpToDate, is UpdateCheckResult.Failed -> Unit

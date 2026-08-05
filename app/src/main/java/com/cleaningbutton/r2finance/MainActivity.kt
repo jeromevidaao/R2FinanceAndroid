@@ -1,8 +1,12 @@
 package com.cleaningbutton.r2finance
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
@@ -14,19 +18,51 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import com.cleaningbutton.r2finance.push.PushRegistration
+import com.cleaningbutton.r2finance.push.R2FinanceMessagingService
 import com.cleaningbutton.r2finance.ui.UpdateGate
 import com.cleaningbutton.r2finance.ui.login.AuthScreen
 import com.cleaningbutton.r2finance.ui.login.BiometricGate
 import com.cleaningbutton.r2finance.ui.navigation.AppNavHost
 import com.cleaningbutton.r2finance.ui.theme.R2FinanceTheme
+import com.cleaningbutton.r2finance.update.RemoteAppVersion
 
 class MainActivity : FragmentActivity() {
+
+    private val notificationPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            PushRegistration.subscribeAndRegister(this)
+        }
+    }
+
+    /** Pending update from FCM tap extras (handled after unlock). */
+    private var pendingUpdateFromPush: RemoteAppVersion? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val app = application as R2FinanceApplication
         val session = app.container.sessionStore
+
+        pendingUpdateFromPush = remoteFromIntent(intent)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val ok = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!ok) {
+                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                PushRegistration.subscribeAndRegister(this)
+            }
+        } else {
+            PushRegistration.subscribeAndRegister(this)
+        }
 
         setContent {
             R2FinanceTheme {
@@ -41,12 +77,16 @@ class MainActivity : FragmentActivity() {
                             },
                         )
                     }
+                    var forceUpdate by remember { mutableStateOf(pendingUpdateFromPush) }
 
                     when (phase) {
                         "auth" -> AuthScreen(
                             authApi = app.container.authApi,
                             sessionStore = session,
-                            onAuthenticated = { phase = "app" },
+                            onAuthenticated = {
+                                PushRegistration.subscribeAndRegister(this@MainActivity)
+                                phase = "app"
+                            },
                         )
                         "bio" -> {
                             Box(
@@ -73,12 +113,38 @@ class MainActivity : FragmentActivity() {
                                 )
                             }
                         }
-                        else -> UpdateGate(container = app.container) {
+                        else -> UpdateGate(
+                            container = app.container,
+                            forceRemote = forceUpdate,
+                            onForceConsumed = { forceUpdate = null },
+                        ) {
                             AppNavHost(container = app.container)
                         }
                     }
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        // If already unlocked, UpdateGate will pick up on next composition via recreate path —
+        // simplest: restart activity extras handled next cold open.
+    }
+
+    private fun remoteFromIntent(intent: android.content.Intent?): RemoteAppVersion? {
+        if (intent == null) return null
+        val type = intent.getStringExtra(R2FinanceMessagingService.EXTRA_FCM_TYPE) ?: return null
+        if (type != R2FinanceMessagingService.TYPE_APP_UPDATE) return null
+        val apkUrl = intent.getStringExtra(R2FinanceMessagingService.EXTRA_APK_URL) ?: return null
+        val vc = intent.getStringExtra(R2FinanceMessagingService.EXTRA_VERSION_CODE)?.toIntOrNull()
+            ?: return null
+        return RemoteAppVersion(
+            versionCode = vc,
+            versionName = intent.getStringExtra(R2FinanceMessagingService.EXTRA_VERSION_NAME).orEmpty(),
+            apkUrl = apkUrl,
+            releaseNotes = intent.getStringExtra(R2FinanceMessagingService.EXTRA_RELEASE_NOTES).orEmpty(),
+        )
     }
 }
