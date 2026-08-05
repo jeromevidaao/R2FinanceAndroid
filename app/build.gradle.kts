@@ -30,12 +30,16 @@ android {
         applicationId = "com.cleaningbutton.r2finance"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.2.1"
+        versionCode = 4
+        versionName = "0.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Phase 3+: R2FinanceAPI base URL (empty until deployed).
-        buildConfigField("String", "API_BASE_URL", "\"\"")
+        buildConfigField(
+            "String",
+            "API_BASE_URL",
+            "\"https://x0wiir7m27.execute-api.us-east-1.amazonaws.com\"",
+        )
+        buildConfigField("String", "DEFAULT_USER_EMAIL", "\"jerome.ans@gmail.com\"")
         buildConfigField("String", "YNAB_API_BASE", "\"https://api.ynab.com/v1\"")
         // Self-hosted OTA (not Play Store) — same pattern as R2Android.
         buildConfigField(
@@ -127,6 +131,8 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("androidx.security:security-crypto:1.0.0")
+    implementation("androidx.biometric:biometric:1.1.0")
+    implementation("androidx.fragment:fragment-ktx:1.8.5")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
