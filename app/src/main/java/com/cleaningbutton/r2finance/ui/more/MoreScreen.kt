@@ -7,8 +7,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -26,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.cleaningbutton.r2finance.BuildConfig
 import com.cleaningbutton.r2finance.R
@@ -47,8 +53,13 @@ fun MoreScreen(container: AppContainer) {
     var tokenInput by remember {
         mutableStateOf(container.ynabTokenStore.getToken().orEmpty())
     }
+    var tokenVisible by remember { mutableStateOf(false) }
     var tokenSaved by remember { mutableStateOf(container.ynabTokenStore.hasToken()) }
-    var importStatus by remember { mutableStateOf("Import pulls accounts, categories, payees, transactions from YNAB.") }
+    var importStatus by remember {
+        mutableStateOf(
+            "Import pulls accounts, categories, payees, transactions from YNAB.",
+        )
+    }
     var lastReport by remember { mutableStateOf<YnabImportReport?>(null) }
     var importBusy by remember { mutableStateOf(false) }
 
@@ -71,8 +82,13 @@ fun MoreScreen(container: AppContainer) {
 
             Text("YNAB import (Phase 2)", style = MaterialTheme.typography.titleMedium)
             Text(
-                "Create a Personal Access Token in YNAB → Account Settings → Developer Settings. " +
-                    "Stored encrypted on device. Not uploaded anywhere in Phase 2.",
+                "How to get a token (YNAB only shows it ONCE):\n" +
+                    "1. Open app.ynab.com/settings/developer on a laptop/browser\n" +
+                    "2. Personal Access Tokens → New Token → enter YNAB password → Generate\n" +
+                    "3. Copy the FULL token from the BANNER AT THE TOP " +
+                    "(not the table row with XXXXXXXXXX-…)\n" +
+                    "4. Paste here, tap the eye to verify, then Save + Import.\n" +
+                    "If you only see redacted tokens, generate a new one and copy immediately.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -81,16 +97,72 @@ fun MoreScreen(container: AppContainer) {
                 onValueChange = { tokenInput = it },
                 label = { Text("YNAB Personal Access Token") },
                 singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
+                visualTransformation = if (tokenVisible) {
+                    VisualTransformation.None
+                } else {
+                    PasswordVisualTransformation()
+                },
+                trailingIcon = {
+                    IconButton(onClick = { tokenVisible = !tokenVisible }) {
+                        Icon(
+                            imageVector = if (tokenVisible) {
+                                Icons.Default.VisibilityOff
+                            } else {
+                                Icons.Default.Visibility
+                            },
+                            contentDescription = if (tokenVisible) "Hide token" else "Show token",
+                        )
+                    }
+                },
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (tokenInput.isNotBlank()) {
+                Text(
+                    "Length ${tokenInput.trim().length} chars" +
+                        if (tokenInput.contains("X", ignoreCase = false) &&
+                            tokenInput.contains("XXXX")
+                        ) {
+                            " — looks redacted; paste the full one-time token from the top banner"
+                        } else {
+                            ""
+                        },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Button(
                 onClick = {
                     container.ynabTokenStore.setToken(tokenInput)
                     tokenSaved = container.ynabTokenStore.hasToken()
-                    importStatus = if (tokenSaved) "Token saved." else "Token cleared."
+                    importStatus = if (tokenSaved) {
+                        "Token saved (${tokenInput.trim().length} chars)."
+                    } else {
+                        "Token cleared."
+                    }
                 },
             ) { Text(if (tokenSaved) "Update token" else "Save token") }
+            Button(
+                enabled = tokenInput.isNotBlank() && !importBusy,
+                onClick = {
+                    importBusy = true
+                    importStatus = "Testing token…"
+                    // Ensure latest field value is used for the request
+                    container.ynabTokenStore.setToken(tokenInput)
+                    tokenSaved = container.ynabTokenStore.hasToken()
+                    scope.launch {
+                        runCatching {
+                            container.ynabClient.listPlans()
+                        }.onSuccess { plans ->
+                            importStatus =
+                                "Token OK — ${plans.size} plan(s): " +
+                                    plans.joinToString { it.name }
+                        }.onFailure {
+                            importStatus = "Token test failed: ${it.message}"
+                        }
+                        importBusy = false
+                    }
+                },
+            ) { Text("Test token (list plans)") }
             if (tokenSaved) {
                 TextButton(
                     onClick = {
