@@ -22,9 +22,9 @@ Companion API/infra: **[R2FinanceAPI](https://github.com/cleaningbutton/R2Financ
 
 See [docs/PHASED_PLAN.md](docs/PHASED_PLAN.md).
 
-## Not on Play Store
+## Not on Play Store — self-hosted OTA
 
-Self-hosted **OTA** (same pattern as R2Android / Cleaning Button):
+Same pattern as R2Android / Cleaning Button:
 
 | Artifact | URL |
 |----------|-----|
@@ -32,7 +32,20 @@ Self-hosted **OTA** (same pattern as R2Android / Cleaning Button):
 | Version manifest | `https://www.cleaningbutton.com/r2finance-builds/version.json` |
 | History | `https://www.cleaningbutton.com/r2finance-builds/history.json` |
 
-CI on `main`: build signed APK → S3 → update `version.json`. In-app **More → Check for updates**.
+**How it works**
+
+1. Push to `main` → CI runs unit tests + builds **stable-signed** debug APK (SSM keystore).
+2. CI uploads `R2Finance-latest.apk` + `version.json` (+ `history.json`) to S3 (`cleansite/r2finance-builds/`).
+3. App checks `version.json` after login (**UpdateGate**) and from **More → Check for updates**.
+4. If remote `versionCode` is higher → dialog → download → package installer.
+
+**Requirements for CI OTA**
+
+- Repo secret `AWS_ROLE_ARN` = `arn:aws:iam::834917996497:role/github-actions-cleaningbutton-deploy`
+- OIDC trust includes `repo:jeromevidaao/R2FinanceAndroid:*`
+- SSM params under `/android/cleaningbutton/*` (or `/android/r2finance/*`)
+
+Bump `versionCode` in `app/build.gradle.kts` on every shippable change (CI fails if not greater than published).
 
 ## Stack
 

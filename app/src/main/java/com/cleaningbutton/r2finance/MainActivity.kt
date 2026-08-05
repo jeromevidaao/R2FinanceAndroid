@@ -15,6 +15,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.fragment.app.FragmentActivity
+import com.cleaningbutton.r2finance.ui.UpdateGate
 import com.cleaningbutton.r2finance.ui.login.AuthScreen
 import com.cleaningbutton.r2finance.ui.login.BiometricGate
 import com.cleaningbutton.r2finance.ui.navigation.AppNavHost
@@ -62,7 +63,6 @@ class MainActivity : FragmentActivity() {
                                         phase = "app"
                                     },
                                     onCancel = {
-                                        // Fall back to full login
                                         session.clear()
                                         phase = "auth"
                                     },
@@ -73,7 +73,9 @@ class MainActivity : FragmentActivity() {
                                 )
                             }
                         }
-                        else -> AppNavHost(container = app.container)
+                        else -> UpdateGate(container = app.container) {
+                            AppNavHost(container = app.container)
+                        }
                     }
                 }
             }

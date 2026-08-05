@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   build:
-    name: Assemble debug APK
+    name: Assemble + OTA publish
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -37,8 +37,7 @@ jobs:
       - name: Unit tests
         run: ./gradlew testDebugUnitTest --stacktrace
 
-      # OIDC + OTA when AWS_ROLE_ARN is set. Secrets cannot be used in `if:`;
-      # continue-on-error so missing OIDC still leaves unit tests + assemble green.
+      # OIDC (secrets cannot be used in if: — continue-on-error only on PR / missing secret)
       - name: Configure AWS credentials (OIDC)
         id: aws
         if: github.event_name != 'pull_request'
@@ -51,7 +50,6 @@ jobs:
       - name: Load stable signing keystore from SSM
         id: signing
         if: steps.aws.outcome == 'success'
-        continue-on-error: true
         run: |
           set -euo pipefail
           load() {
@@ -70,6 +68,10 @@ jobs:
             KEY_ALIAS=$(aws ssm get-parameter --name /android/r2finance/key-alias --query 'Parameter.Value' --output text)
             KEY_PASS=$(load /android/r2finance/key-password)
           fi
+          test -n "$KS_B64"
+          test -n "$STORE_PASS"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASS"
           KS_PATH="${RUNNER_TEMP}/r2finance-upload.p12"
           printf '%s' "$KS_B64" | base64 -d > "$KS_PATH"
           test -s "$KS_PATH"
@@ -78,7 +80,7 @@ jobs:
           echo "CB_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
           echo "CB_KEY_PASSWORD=$KEY_PASS" >> "$GITHUB_ENV"
           keytool -list -keystore "$KS_PATH" -storepass "$STORE_PASS" -storetype PKCS12 >/dev/null
-          echo "Stable keystore loaded"
+          echo "Stable keystore loaded (alias=$KEY_ALIAS)"
           echo "has_signing=true" >> "$GITHUB_OUTPUT"
 
       - name: Ensure versionCode > published OTA
@@ -89,9 +91,22 @@ jobs:
             || echo '{}' > /tmp/prev-version.json
           export PREV_VERSION_JSON=/tmp/prev-version.json
           python3 scripts/ensure-ota-version-bump.py
+          echo "Gradle versions:"
+          grep -E 'versionCode|versionName' app/build.gradle.kts | head -5
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.signing.outputs.has_signing }}" = "true" ]; then
+            if [ -z "${CB_KEYSTORE_PATH:-}" ] || [ ! -f "${CB_KEYSTORE_PATH}" ]; then
+              echo "::error::Stable keystore missing — refusing randomly signed OTA APK"
+              exit 1
+            fi
+            echo "Building with stable upload signing"
+          else
+            echo "Building with default debug signing (no OTA publish)"
+          fi
+          ./gradlew assembleDebug --stacktrace
 
       - name: Locate APK
         id: apk
@@ -108,7 +123,7 @@ jobs:
         with:
           name: R2Finance-apk
           path: /tmp/R2Finance.apk
-          retention-days: 14
+          retention-days: 7
 
       - name: Publish OTA to S3
         if: steps.signing.outputs.has_signing == 'true' && github.ref == 'refs/heads/main'
@@ -119,23 +134,51 @@ jobs:
           DEST_PREFIX="s3://cleansite/r2finance-builds"
           PUBLIC_BASE="https://www.cleaningbutton.com/r2finance-builds"
           STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-          VERSIONED="R2Finance-${STAMP}-${GITHUB_SHA:0:7}.apk"
-          aws s3 cp "$APK_PATH" "$DEST_PREFIX/$VERSIONED" --content-type application/vnd.android.package-archive
-          aws s3 cp "$APK_PATH" "$DEST_PREFIX/R2Finance-latest.apk" --content-type application/vnd.android.package-archive
+          SHORT="${GITHUB_SHA:0:7}"
+          VERSIONED="R2Finance-${STAMP}-${SHORT}.apk"
+          aws s3 cp "$APK_PATH" "$DEST_PREFIX/$VERSIONED" \
+            --content-type application/vnd.android.package-archive \
+            --cache-control "public,max-age=31536000"
+          aws s3 cp "$APK_PATH" "$DEST_PREFIX/R2Finance-latest.apk" \
+            --content-type application/vnd.android.package-archive \
+            --cache-control "no-cache"
           export LATEST_URL="$PUBLIC_BASE/R2Finance-latest.apk"
           export RELEASE_NOTES="${{ github.event.head_commit.message }}"
           export VERSION_JSON_OUT=/tmp/version.json
           export HISTORY_JSON_OUT=/tmp/history.json
-          aws s3 cp "$DEST_PREFIX/history.json" /tmp/prev-history.json || echo '{"entries":[]}' > /tmp/prev-history.json
+          aws s3 cp "$DEST_PREFIX/history.json" /tmp/prev-history.json \
+            || echo '{"entries":[]}' > /tmp/prev-history.json
           export PREV_HISTORY_JSON=/tmp/prev-history.json
           python3 scripts/write-version-manifest.py
-          aws s3 cp /tmp/version.json "$DEST_PREFIX/version.json" --content-type application/json
-          aws s3 cp /tmp/history.json "$DEST_PREFIX/history.json" --content-type application/json
+          aws s3 cp /tmp/version.json "$DEST_PREFIX/version.json" \
+            --content-type application/json --cache-control "no-cache"
+          aws s3 cp /tmp/history.json "$DEST_PREFIX/history.json" \
+            --content-type application/json --cache-control "no-cache"
           echo "Published OTA: $LATEST_URL"
           cat /tmp/version.json
+          # Verify public URL
+          sleep 2
+          curl -fsSL "$PUBLIC_BASE/version.json" | tee /tmp/public-version.json
+          python3 - <<'PY'
+          import json, pathlib, re
+          pub = json.loads(pathlib.Path("/tmp/public-version.json").read_text())
+          gradle = pathlib.Path("app/build.gradle.kts").read_text()
+          vc = int(re.search(r"versionCode\s*=\s*(\d+)", gradle).group(1))
+          assert pub["versionCode"] == vc, (pub["versionCode"], vc)
+          assert pub["apkUrl"].endswith("R2Finance-latest.apk")
+          print("OTA public manifest OK", pub["versionCode"], pub["versionName"])
+          PY
 
-      - name: OTA skipped notice
-        if: github.event_name != 'pull_request' && steps.signing.outputs.has_signing != 'true'
+      - name: Fail if main OTA missing (production gate)
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         run: |
-          echo "OTA publish skipped — set repo secret AWS_ROLE_ARN (OIDC) and ensure SSM keystore access."
-          echo "Unit tests + APK assemble still gate the build."
+          set -euo pipefail
+          if [ "${{ steps.signing.outputs.has_signing }}" != "true" ]; then
+            echo "::error::OTA not published — AWS OIDC or keystore failed. Check AWS_ROLE_ARN + SSM."
+            exit 1
+          fi
+          echo "OTA publish path completed."
+
+      - name: OTA skipped notice (PR only)
+        if: github.event_name == 'pull_request'
+        run: echo "PR build — OTA publish skipped by design."
