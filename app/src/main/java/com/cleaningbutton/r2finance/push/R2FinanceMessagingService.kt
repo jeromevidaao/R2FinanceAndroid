@@ -35,6 +35,7 @@ class R2FinanceMessagingService : FirebaseMessagingService() {
             ?: data["body"]
             ?: when (type) {
                 TYPE_APP_UPDATE -> "A new app version is ready to install."
+                TYPE_LOGIN -> "Someone signed in to R2Finance."
                 else -> "New notification"
             }
 
@@ -71,10 +72,20 @@ class R2FinanceMessagingService : FirebaseMessagingService() {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .setContentIntent(pi)
-            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setCategory(
+                if (type == TYPE_LOGIN) NotificationCompat.CATEGORY_MESSAGE
+                else NotificationCompat.CATEGORY_STATUS,
+            )
             .build()
         val nm = getSystemService(NotificationManager::class.java)
-        nm?.notify((System.currentTimeMillis() % Int.MAX_VALUE).toInt(), n)
+        // Stable-ish id for login so rapid re-login updates rather than floods
+        val id =
+            if (type == TYPE_LOGIN) {
+                (data["email"] ?: type).hashCode()
+            } else {
+                (System.currentTimeMillis() % Int.MAX_VALUE).toInt()
+            }
+        nm?.notify(id, n)
     }
 
     private fun ensureChannel() {
@@ -84,10 +95,10 @@ class R2FinanceMessagingService : FirebaseMessagingService() {
         nm.createNotificationChannel(
             NotificationChannel(
                 CHANNEL_ID,
-                "R2Finance updates",
+                "R2Finance alerts",
                 NotificationManager.IMPORTANCE_HIGH,
             ).apply {
-                description = "App update and R2Finance alerts"
+                description = "Sign-in alerts, app updates, and R2Finance notices"
             },
         )
     }
@@ -96,6 +107,7 @@ class R2FinanceMessagingService : FirebaseMessagingService() {
         private const val TAG = "R2FinanceFCM"
         const val CHANNEL_ID = "r2finance_updates"
         const val TYPE_APP_UPDATE = "app_update"
+        const val TYPE_LOGIN = "login"
         const val TOPIC = "r2finance_updates"
 
         const val EXTRA_FCM_TYPE = "r2f_fcm_type"

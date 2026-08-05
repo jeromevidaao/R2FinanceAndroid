@@ -80,7 +80,7 @@ class AuthApi(
     suspend fun login(email: String, password: String): AuthLoginResponse =
         post(
             "/v1/auth/login",
-            """{"email":${email.q()},"password":${password.q()}}""",
+            """{"email":${email.q()},"password":${password.q()},"client":"android"}""",
             AuthLoginResponse.serializer(),
         )
 
@@ -94,14 +94,14 @@ class AuthApi(
     suspend fun mfaEnable(email: String, password: String, code: String): AuthLoginResponse =
         post(
             "/v1/auth/mfa/enable",
-            """{"email":${email.q()},"password":${password.q()},"code":${code.q()}}""",
+            """{"email":${email.q()},"password":${password.q()},"code":${code.q()},"client":"android"}""",
             AuthLoginResponse.serializer(),
         )
 
     suspend fun mfaVerify(mfaToken: String, code: String): AuthLoginResponse =
         post(
             "/v1/auth/mfa/verify",
-            """{"mfaToken":${mfaToken.q()},"code":${code.q()}}""",
+            """{"mfaToken":${mfaToken.q()},"code":${code.q()},"client":"android"}""",
             AuthLoginResponse.serializer(),
         )
 
