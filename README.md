@@ -4,21 +4,25 @@
 
 Companion API/infra: **[R2FinanceAPI](https://github.com/cleaningbutton/R2FinanceAPI)** (API Gateway + Lambda + DynamoDB only).
 
+## Data flow
+
+```
+Android (Room)  ◄── HTTPS ──►  R2FinanceAPI + DynamoDB  ◄── backend only ──►  YNAB
+```
+
+- **This app never calls the YNAB API.** No PAT, no on-device import.
+- Day-to-day UI reads **local Room**.
+- Refresh via **Accounts → Sync from cloud** (`CloudSync` → R2FinanceAPI → DDB).
+- YNAB pull/push (if still enabled) runs only in **R2FinanceAPI** Lambdas + Secrets Manager.
+
 ## Phases
 
 | Phase | What |
 |-------|------|
 | **1** | Room data model, Compose UI, local CRUD, OTA |
-| **2** (in app) | YNAB PAT (encrypted) + full import + balance audit — **More** tab |
-| **3** | Bidirectional sync via R2FinanceAPI ↔ YNAB |
-| **4** | Cut the cord from YNAB |
-
-### YNAB import (Phase 2)
-
-1. YNAB → Account Settings → Developer Settings → New Personal Access Token  
-2. Open **R2Finance → More** → paste token → **Save** → **Import from YNAB**  
-3. Review balance audit lines (✓ match / ≠ mismatch)  
-4. Token stays on device only (EncryptedSharedPreferences) until Phase 3 server secret
+| **2** | ~~On-device YNAB import~~ **removed** — import/sync is server-side only |
+| **3** | Bidirectional sync via R2FinanceAPI ↔ YNAB (backend) |
+| **4** | Cut the cord from YNAB on the backend |
 
 See [docs/PHASED_PLAN.md](docs/PHASED_PLAN.md).
 
@@ -50,8 +54,8 @@ Bump `versionCode` in `app/build.gradle.kts` on every shippable change (CI fails
 ## Stack
 
 - Kotlin, Jetpack Compose, Room, Navigation
-- Money as **milliunits** (`Long`), YNAB-compatible
-- Sync metadata on every entity (`ynabId`, `syncStatus`, `updatedAt`, soft `deleted`)
+- Money as **milliunits** (`Long`)
+- Sync metadata on every entity (`ynabId` stable remote id, `syncStatus`, `updatedAt`, soft `deleted`)
 
 ## Local build
 

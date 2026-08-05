@@ -1,10 +1,10 @@
 package com.cleaningbutton.r2finance.domain
 
 enum class SyncStatus {
-    /** Matches remote (DDB and/or YNAB). */
+    /** Matches remote (R2FinanceAPI / DynamoDB). */
     SYNCED,
 
-    /** Local change waiting to push to R2FinanceAPI / YNAB. */
+    /** Local change waiting to push to R2FinanceAPI. */
     PENDING_PUSH,
 
     /** Divergent edits; needs user choice. */

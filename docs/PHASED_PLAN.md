@@ -15,9 +15,9 @@
 └─────────────────┘              └──────────────────┘              └─────────────┘
 ```
 
-- **Phase 1–2:** Room is primary; YNAB used for one-way import.
-- **Phase 3:** DDB is canonical; Android and YNAB are peers that sync through AWS.
-- **Phase 4:** YNAB connector disabled; DDB + Android only.
+- **Phase 1–2:** Room is primary. **On-device YNAB import was removed** — full import is server-side (R2FinanceAPI).
+- **Phase 3:** DDB is canonical; Android syncs only with AWS; YNAB (if any) syncs only via backend Lambdas.
+- **Phase 4:** YNAB connector disabled on AWS; DDB + Android only.
 
 Every local row carries sync metadata so dual-write is possible without rewrite:
 
@@ -52,29 +52,23 @@ Money is always **milliunits** (`Long`), never floating point.
 
 ---
 
-## Phase 2 — Migrate everything from YNAB
+## Phase 2 — Migrate everything from YNAB (server-side only)
 
-**Goal:** One-shot (re-runnable) full import of live YNAB plan into Room (and later DDB).
+**Goal:** One-shot (re-runnable) full import of live YNAB plan into **DynamoDB** via R2FinanceAPI. Android hydrates from cloud only.
 
-### Deliverables
-- Personal Access Token (or OAuth) stored securely (EncryptedSharedPreferences / Secrets Manager for AWS side)
-- Importer using `GET /plans/{id}` (or resource endpoints) + `last_knowledge_of_server` after first full pull
-- Map all: accounts, category groups/categories, payees, transactions + subtransactions, scheduled transactions
-- Preserve YNAB ids in `ynabId`; generate Ledger `id`s
-- Payee → last category memory derived from recent categorized txns
-- Import report UI: counts, date range, uncategorized residual
-- Optional: write same snapshot to DDB for Phase 3 baseline
+### Android
+- **No YNAB client, PAT, or import UI** (removed — confusing dual path).
+- Pull ledger via `CloudSync` / Accounts → Sync from cloud.
 
-### YNAB constraints
-- **200 requests / hour / token** — batch; use plan detail + deltas
-- Transaction list defaults to **1 year** unless `since_date` set — paginate history explicitly
-- Milliunits + ISO dates as returned
+### Backend (R2FinanceAPI)
+- PAT in Secrets Manager (`R2Finance/ynab-pat`)
+- Full import + delta pull + push Lambdas
+- Preserve YNAB ids as stable remote keys (`ynabId` on API/DDB rows)
 
 ### Success criteria
-- Balances per account match YNAB within 1 milliunit
-- Category trees match
-- Transaction counts match for imported range
-- Re-import is idempotent (`ynabId` upsert)
+- Balances per account match YNAB within 1 milliunit (server import audit)
+- Re-import is idempotent on remote id
+- Android can fully populate Room from DDB without ever talking to YNAB
 
 ---
 
@@ -142,7 +136,7 @@ Money is always **milliunits** (`Long`), never floating point.
 |------|--------|
 | 1 | Phase 1: schema, Room, shell UI, local CRUD |
 | 2 | Phase 1 finish: edit txn, splits, transfers; tests |
-| 3 | Phase 2: YNAB client + full migrate + balance audit |
+| 3 | Phase 2: server YNAB → DDB import; Android cloud pull only |
 | 4–5 | Phase 3: DDB schema, pull sync, Android cloud API |
 | 6–7 | Phase 3: push mutations both ways, conflicts, polish |
 | 8 | Phase 4: dual-run soak, cutover checklist, disable YNAB |

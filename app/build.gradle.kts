@@ -30,8 +30,8 @@ android {
         applicationId = "com.cleaningbutton.r2finance"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.3.2"
+        versionCode = 7
+        versionName = "0.3.3"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField(
@@ -40,7 +40,6 @@ android {
             "\"https://x0wiir7m27.execute-api.us-east-1.amazonaws.com\"",
         )
         buildConfigField("String", "DEFAULT_USER_EMAIL", "\"jerome.ans@gmail.com\"")
-        buildConfigField("String", "YNAB_API_BASE", "\"https://api.ynab.com/v1\"")
         // Self-hosted OTA (not Play Store) — same pattern as R2Android.
         buildConfigField(
             "String",

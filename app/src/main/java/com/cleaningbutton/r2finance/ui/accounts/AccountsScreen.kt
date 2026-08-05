@@ -58,7 +58,7 @@ fun AccountsScreen(
     var syncMessage by remember { mutableStateOf<String?>(null) }
     var autoSynced by remember { mutableStateOf(false) }
 
-    fun pullFromCloud(force: Boolean = false) {
+    fun pullFromCloud() {
         if (syncing) return
         scope.launch {
             syncing = true
@@ -78,12 +78,7 @@ fun AccountsScreen(
     }
 
     LaunchedEffect(Unit) {
-        val plan = container.ledger.ensureDefaultPlan()
-        planId = plan.id
-        // Auto-hydrate from R2FinanceAPI (DDB) when local is empty
-        val existing = container.ledger.observeAccountsWithBalances(plan.id)
-        // One-shot count via cloud if empty after a short observation is awkward —
-        // just auto-pull once if we haven't this session.
+        planId = container.ledger.ensureDefaultPlan().id
         if (!autoSynced) {
             autoSynced = true
             pullFromCloud()
@@ -94,7 +89,6 @@ fun AccountsScreen(
         planId?.let { container.ledger.observeAccountsWithBalances(it) } ?: flowOf(emptyList())
     }.collectAsStateWithLifecycle(initialValue = emptyList())
 
-    // Prefer open non-closed; balances from txns
     val openAccounts = accounts.filter { !it.account.closed }
 
     Scaffold(
@@ -104,7 +98,7 @@ fun AccountsScreen(
                 actions = {
                     IconButton(
                         enabled = !syncing,
-                        onClick = { pullFromCloud(force = true) },
+                        onClick = { pullFromCloud() },
                     ) {
                         Icon(Icons.Default.Refresh, contentDescription = "Sync from cloud")
                     }
@@ -129,7 +123,7 @@ fun AccountsScreen(
                 ) {
                     CircularProgressIndicator()
                     Text(
-                        syncMessage ?: "Loading accounts from cloud…",
+                        text = syncMessage ?: "Loading accounts from cloud…",
                         modifier = Modifier.padding(top = 16.dp),
                         style = MaterialTheme.typography.bodyMedium,
                     )
@@ -144,45 +138,44 @@ fun AccountsScreen(
                     verticalArrangement = Arrangement.Center,
                 ) {
                     Text(
-                        "No accounts on this phone yet.",
+                        text = "No accounts on this phone yet.",
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Text(
-                        "Your YNAB data is already in the cloud (R2Finance). " +
+                        text = "Your YNAB data is already in the cloud (R2Finance). " +
                             "Tap Sync to download accounts and transactions.",
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(top = 8.dp),
                     )
-                    syncMessage?.let {
+                    val err = syncMessage
+                    if (err != null) {
                         Text(
-                            it,
+                            text = err,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                             modifier = Modifier.padding(top = 8.dp),
                         )
                     }
-                    TextButton(onClick = { pullFromCloud(force = true) }) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.CloudDownload, contentDescription = null)
-                            Spacer(Modifier = Modifier.width(8.dp))
-                            Text("Sync from cloud")
-                        }
+                    TextButton(
+                        onClick = { pullFromCloud() },
+                        modifier = Modifier.padding(top = 16.dp),
+                    ) {
+                        Text("Sync from cloud")
                     }
                 }
             }
             else -> {
-                Column(Modifier = Modifier.padding(padding)) {
-                    syncMessage?.let {
+                Column(modifier = Modifier.padding(padding)) {
+                    val msg = syncMessage
+                    if (msg != null) {
                         Text(
-                            it,
+                            text = msg,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                         )
                     }
-                    LazyColumn(
-                        contentPadding = PaddingValues(vertical = 8.dp),
-                    ) {
+                    LazyColumn(contentPadding = PaddingValues(vertical = 8.dp)) {
                         items(openAccounts, key = { it.account.id }) { row ->
                             AccountRow(row = row, onClick = { onOpenAccount(row.account.id) })
                         }

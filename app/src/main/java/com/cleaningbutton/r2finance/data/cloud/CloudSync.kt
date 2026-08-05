@@ -26,7 +26,7 @@ data class CloudSyncReport(
 
 /**
  * Pull ledger snapshot from R2FinanceAPI (DynamoDB) into local Room.
- * Uses YNAB ids as stable local primary keys for clean re-sync.
+ * Uses stable remote ids (API `ynabId` fields) as local primary keys for clean re-sync.
  */
 class CloudSync(
     private val db: R2FinanceDatabase,
