@@ -37,10 +37,12 @@ jobs:
       - name: Unit tests
         run: ./gradlew testDebugUnitTest --stacktrace
 
-      # OIDC + OTA only when AWS_ROLE_ARN is configured (same pattern as R2Android).
+      # OIDC + OTA when AWS_ROLE_ARN is set. Secrets cannot be used in `if:`;
+      # continue-on-error so missing OIDC still leaves unit tests + assemble green.
       - name: Configure AWS credentials (OIDC)
         id: aws
-        if: github.event_name != 'pull_request' && secrets.AWS_ROLE_ARN != ''
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
@@ -49,6 +51,7 @@ jobs:
       - name: Load stable signing keystore from SSM
         id: signing
         if: steps.aws.outcome == 'success'
+        continue-on-error: true
         run: |
           set -euo pipefail
           load() {
