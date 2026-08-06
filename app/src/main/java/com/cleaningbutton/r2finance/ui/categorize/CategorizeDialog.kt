@@ -2,6 +2,7 @@ package com.cleaningbutton.r2finance.ui.categorize
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -28,6 +29,9 @@ import com.cleaningbutton.r2finance.data.AppContainer
 import com.cleaningbutton.r2finance.data.local.entity.CategoryEntity
 import com.cleaningbutton.r2finance.data.repository.TransactionRow
 import com.cleaningbutton.r2finance.domain.Money
+import com.cleaningbutton.r2finance.ui.category.CategoryChip
+import com.cleaningbutton.r2finance.ui.category.categoryChipForCategory
+import com.cleaningbutton.r2finance.ui.category.categoryChipForRow
 import kotlinx.coroutines.launch
 
 /**
@@ -100,13 +104,10 @@ fun CategorizeDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (!bulk) {
-                    single?.categoryName?.let {
-                        Text(
-                            "Current: $it",
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                    }
+                if (!bulk && single != null) {
+                    CategoryChip(
+                        model = categoryChipForRow(single, single.categoryGroupName),
+                    )
                 }
                 OutlinedTextField(
                     value = query,
@@ -146,6 +147,7 @@ fun CategorizeDialog(
                                 )
                             }
                             items(cats, key = { it.id }) { cat ->
+                                val gName = groupNames[cat.categoryGroupId]
                                 TextButton(
                                     modifier = Modifier.fillMaxWidth(),
                                     enabled = !busy,
@@ -178,7 +180,17 @@ fun CategorizeDialog(
                                             onDismiss()
                                         }
                                     },
-                                ) { Text(cat.name) }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Start,
+                                    ) {
+                                        CategoryChip(
+                                            model = categoryChipForCategory(cat.name, gName),
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

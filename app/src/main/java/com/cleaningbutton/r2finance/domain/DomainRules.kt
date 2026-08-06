@@ -21,21 +21,18 @@ object DomainRules {
         return categoryName?.equals("Uncategorized", ignoreCase = true) == true
     }
 
+    /**
+     * Spending list = unapproved only.
+     * Approve works without a category; approved rows leave even if uncategorized.
+     * Extra params kept for call-site compatibility.
+     */
+    @Suppress("UNUSED_PARAMETER")
     fun isInboxItem(
         approved: Boolean,
-        onBudget: Boolean,
-        categoryId: String?,
-        hasSubtransactions: Boolean,
+        onBudget: Boolean = true,
+        categoryId: String? = null,
+        hasSubtransactions: Boolean = false,
         isTransfer: Boolean = false,
         categoryName: String? = null,
-    ): Boolean {
-        if (!approved) return true
-        return isUncategorizedOnBudget(
-            onBudget = onBudget,
-            categoryId = categoryId,
-            hasSubtransactions = hasSubtransactions,
-            isTransfer = isTransfer,
-            categoryName = categoryName,
-        )
-    }
+    ): Boolean = !approved
 }

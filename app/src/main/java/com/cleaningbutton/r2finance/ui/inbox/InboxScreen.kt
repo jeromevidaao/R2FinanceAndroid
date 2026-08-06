@@ -49,6 +49,8 @@ import com.cleaningbutton.r2finance.data.repository.TransactionRow
 import com.cleaningbutton.r2finance.domain.ClearedStatus
 import com.cleaningbutton.r2finance.domain.Money
 import com.cleaningbutton.r2finance.ui.categorize.CategorizeDialog
+import com.cleaningbutton.r2finance.ui.category.CategoryChip
+import com.cleaningbutton.r2finance.ui.category.categoryChipForRow
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
@@ -372,7 +374,6 @@ private fun InboxTxnRow(
     onOpenDetail: () -> Unit,
 ) {
     val txn = row.txn
-    val categoryLabel = displayCategory(row)
     val amountColor = if (txn.amountMilli < 0) {
         MaterialTheme.colorScheme.error
     } else {
@@ -404,17 +405,24 @@ private fun InboxTxnRow(
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.SemiBold,
                 )
-                Text(
-                    buildString {
-                        append(categoryLabel)
-                        append(" · ")
-                        append(row.accountName ?: "Account")
-                        append(" · ")
-                        append(clearedLabel(txn.cleared, txn.approved))
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Row(
+                    modifier = Modifier.padding(top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    CategoryChip(
+                        model = categoryChipForRow(row, row.categoryGroupName),
+                    )
+                    Text(
+                        buildString {
+                            append(row.accountName ?: "Account")
+                            append(" · ")
+                            append(clearedLabel(txn.cleared, txn.approved))
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 txn.memo?.takeIf { it.isNotBlank() }?.let {
                     Text(
                         it,
@@ -432,19 +440,6 @@ private fun InboxTxnRow(
             )
         }
     }
-}
-
-private fun displayCategory(row: TransactionRow): String {
-    val txn = row.txn
-    if (txn.transferAccountId != null) return "Transfer"
-    val name = row.categoryName
-    if (name.isNullOrBlank()) return "Uncategorized"
-    if (name.equals("Uncategorized", ignoreCase = true)) return "Uncategorized"
-    // System-style labels when present from YNAB groups
-    if (name.contains("Credit Card Payment", ignoreCase = true)) {
-        return "Credit Card Payment"
-    }
-    return name
 }
 
 private fun clearedLabel(cleared: ClearedStatus, approved: Boolean): String {

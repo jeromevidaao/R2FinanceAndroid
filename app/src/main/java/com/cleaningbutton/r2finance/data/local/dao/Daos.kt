@@ -145,36 +145,13 @@ interface TransactionDao {
     fun observeByAccount(accountId: String): Flow<List<TransactionEntity>>
 
     /**
-     * YNAB-style needs-attention:
-     * - unapproved (always, including transfers)
-     * - on-budget, no category, not a transfer, no splits
-     * - on-budget, category named Uncategorized
+     * Spending / to-approve: unapproved only (including transfers).
+     * Approve without a category removes the row from this list.
      */
     @Query(
         """
         SELECT t.* FROM transactions t
-        INNER JOIN accounts a ON a.id = t.accountId
-        WHERE t.planId = :planId AND t.deleted = 0
-          AND (
-            t.approved = 0
-            OR (
-              a.onBudget = 1
-              AND t.transferAccountId IS NULL
-              AND NOT EXISTS (
-                SELECT 1 FROM subtransactions s
-                WHERE s.transactionId = t.id AND s.deleted = 0
-              )
-              AND (
-                t.categoryId IS NULL
-                OR t.categoryId IN (
-                  SELECT c.id FROM categories c
-                  WHERE c.planId = :planId
-                    AND c.deleted = 0
-                    AND LOWER(c.name) = 'uncategorized'
-                )
-              )
-            )
-          )
+        WHERE t.planId = :planId AND t.deleted = 0 AND t.approved = 0
         ORDER BY t.date DESC
         """,
     )

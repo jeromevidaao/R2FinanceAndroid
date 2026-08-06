@@ -19,6 +19,8 @@ import androidx.compose.ui.unit.dp
 import com.cleaningbutton.r2finance.data.AppContainer
 import com.cleaningbutton.r2finance.data.repository.TransactionRow
 import com.cleaningbutton.r2finance.domain.Money
+import com.cleaningbutton.r2finance.ui.category.CategoryChip
+import com.cleaningbutton.r2finance.ui.category.categoryChipForRow
 import kotlinx.coroutines.launch
 
 /**
@@ -101,9 +103,8 @@ fun InboxTxnDetailDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Text(
-                    "Category: ${row.categoryName ?: if (txn.transferAccountId != null) "Transfer" else "Uncategorized"}",
-                    style = MaterialTheme.typography.labelMedium,
+                CategoryChip(
+                    model = categoryChipForRow(row, row.categoryGroupName),
                 )
                 OutlinedTextField(
                     value = payee,

@@ -36,7 +36,8 @@ class DomainRulesTest {
     }
 
     @Test
-    fun inbox_unapproved_or_uncategorized() {
+    fun inbox_unapproved_only_approve_without_category_leaves() {
+        // Unapproved always in Spending list (even with category).
         assertTrue(
             DomainRules.isInboxItem(
                 approved = false,
@@ -45,26 +46,16 @@ class DomainRulesTest {
                 hasSubtransactions = false,
             ),
         )
-        assertTrue(
-            DomainRules.isInboxItem(
-                approved = true,
-                onBudget = true,
-                categoryId = null,
-                hasSubtransactions = false,
-            ),
-        )
-        // Transfers with null category are normal in YNAB — not inbox.
+        // Approve without category → leaves list.
         assertFalse(
             DomainRules.isInboxItem(
                 approved = true,
                 onBudget = true,
                 categoryId = null,
                 hasSubtransactions = false,
-                isTransfer = true,
             ),
         )
-        // Explicit Internal "Uncategorized" category still needs attention.
-        assertTrue(
+        assertFalse(
             DomainRules.isInboxItem(
                 approved = true,
                 onBudget = true,
@@ -78,14 +69,6 @@ class DomainRulesTest {
                 approved = true,
                 onBudget = true,
                 categoryId = "cat",
-                hasSubtransactions = false,
-            ),
-        )
-        assertFalse(
-            DomainRules.isInboxItem(
-                approved = true,
-                onBudget = false,
-                categoryId = null,
                 hasSubtransactions = false,
             ),
         )

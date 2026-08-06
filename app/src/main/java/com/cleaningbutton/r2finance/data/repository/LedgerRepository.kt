@@ -39,6 +39,7 @@ data class TransactionRow(
     val payeeName: String?,
     val categoryName: String?,
     val accountName: String? = null,
+    val categoryGroupName: String? = null,
 )
 
 class LedgerRepository(
@@ -113,17 +114,21 @@ class LedgerRepository(
             txns.observeInbox(planId),
             payees.observePayees(planId),
             categories.observeCategories(planId),
+            categories.observeGroups(planId),
             accounts.observeOpenAccounts(planId),
-        ) { list, payeeList, catList, acctList ->
+        ) { list, payeeList, catList, groupList, acctList ->
             val payeeMap = payeeList.associateBy { it.id }
             val catMap = catList.associateBy { it.id }
+            val groupMap = groupList.associateBy { it.id }
             val acctMap = acctList.associateBy { it.id }
             list.map { t ->
+                val cat = t.categoryId?.let { catMap[it] }
                 TransactionRow(
                     txn = t,
                     payeeName = t.payeeId?.let { payeeMap[it]?.name },
-                    categoryName = t.categoryId?.let { catMap[it]?.name },
+                    categoryName = cat?.name,
                     accountName = acctMap[t.accountId]?.name,
+                    categoryGroupName = cat?.categoryGroupId?.let { groupMap[it]?.name },
                 )
             }
         }
