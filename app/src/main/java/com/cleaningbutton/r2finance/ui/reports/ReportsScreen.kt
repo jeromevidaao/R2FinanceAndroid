@@ -87,6 +87,7 @@ internal fun TransactionEntity.toAnalytics(groupId: String?): AnalyticsTxn =
         payeeId = payeeId,
         accountId = accountId,
         transferAccountId = transferAccountId,
+        approved = approved,
     )
 
 @OptIn(ExperimentalMaterial3Api::class)

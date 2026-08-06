@@ -111,6 +111,7 @@ data class CloudSubTransaction(
     val payeeId: String? = null,
     val categoryId: String? = null,
     val memo: String? = null,
+    val transferAccountId: String? = null,
 )
 
 @Serializable

@@ -36,7 +36,9 @@ data class AnalyticsTxn(
     val payeeId: String? = null,
     val accountId: String,
     val transferAccountId: String? = null,
-    /** Optional split outflow lines; when non-empty, used for category/payee attribution. */
+    /** YNAB Reflect excludes unapproved (inbox) from spending totals. */
+    val approved: Boolean = true,
+    /** Optional split lines; when non-empty, used for attribution (skip transfer legs). */
     val splitLines: List<AnalyticsSplitLine> = emptyList(),
 )
 
@@ -45,6 +47,7 @@ data class AnalyticsSplitLine(
     val categoryId: String? = null,
     val categoryGroupId: String? = null,
     val payeeId: String? = null,
+    val transferAccountId: String? = null,
 )
 
 data class RankRow(
@@ -282,11 +285,15 @@ object Analytics {
         payeeNames: Map<String, String> = emptyMap(),
         accountNames: Map<String, String> = emptyMap(),
         now: java.time.LocalDate = java.time.LocalDate.now(),
+        /** YNAB Reflect excludes unapproved; default true. */
+        approvedOnly: Boolean = true,
     ): SpendingReport {
         val bounds = resolveDateBounds(mode, periodKey, now)
         val periodTxns =
             transactions.filter {
-                it.transferAccountId == null && inBounds(it.date, bounds.from, bounds.to)
+                it.transferAccountId == null &&
+                    (!approvedOnly || it.approved) &&
+                    inBounds(it.date, bounds.from, bounds.to)
             }
 
         var inflow = 0L
@@ -302,36 +309,51 @@ object Analytics {
             map.getOrPut(key) { MutableTrend(key, label) }
 
         for (t in periodTxns) {
-            if (t.amountMilli > 0) inflow += t.amountMilli
-            if (t.amountMilli < 0) outflow += t.amountMilli
+            val hasSplits = t.splitLines.isNotEmpty()
+            val nonTransferSubs =
+                if (hasSplits) t.splitLines.filter { it.transferAccountId == null } else emptyList()
 
-            if (t.amountMilli < 0) {
-                val lines =
-                    if (t.splitLines.isNotEmpty()) {
-                        t.splitLines.filter { it.amountMilli < 0 }
-                    } else {
-                        listOf(
-                            AnalyticsSplitLine(
-                                amountMilli = t.amountMilli,
-                                categoryId = t.categoryId,
-                                categoryGroupId = t.categoryGroupId,
-                                payeeId = t.payeeId,
-                            ),
-                        )
-                    }
-                for (line in lines) {
-                    val catId = line.categoryId ?: UNCAT
-                    byCat[catId] = (byCat[catId] ?: 0L) + line.amountMilli
-                    val gKey = line.categoryGroupId ?: NO_GROUP
-                    byGroup[gKey] = (byGroup[gKey] ?: 0L) + line.amountMilli
-                    val payeeId = line.payeeId
-                    if (payeeId != null) {
-                        byPayee[payeeId] = (byPayee[payeeId] ?: 0L) + line.amountMilli
-                    }
+            var txnIn = 0L
+            var txnOut = 0L
+            if (hasSplits) {
+                for (line in nonTransferSubs) {
+                    if (line.amountMilli > 0) txnIn += line.amountMilli
+                    if (line.amountMilli < 0) txnOut += line.amountMilli
+                }
+            } else {
+                if (t.amountMilli > 0) txnIn = t.amountMilli
+                if (t.amountMilli < 0) txnOut = t.amountMilli
+            }
+            inflow += txnIn
+            outflow += txnOut
+
+            val spendLines =
+                if (hasSplits) {
+                    nonTransferSubs.filter { it.amountMilli < 0 }
+                } else if (t.amountMilli < 0) {
+                    listOf(
+                        AnalyticsSplitLine(
+                            amountMilli = t.amountMilli,
+                            categoryId = t.categoryId,
+                            categoryGroupId = t.categoryGroupId,
+                            payeeId = t.payeeId,
+                        ),
+                    )
+                } else {
+                    emptyList()
+                }
+            for (line in spendLines) {
+                val catId = line.categoryId ?: UNCAT
+                byCat[catId] = (byCat[catId] ?: 0L) + line.amountMilli
+                val gKey = line.categoryGroupId ?: NO_GROUP
+                byGroup[gKey] = (byGroup[gKey] ?: 0L) + line.amountMilli
+                val payeeId = line.payeeId
+                if (payeeId != null) {
+                    byPayee[payeeId] = (byPayee[payeeId] ?: 0L) + line.amountMilli
                 }
             }
 
-            byAccount[t.accountId] = (byAccount[t.accountId] ?: 0L) + t.amountMilli
+            byAccount[t.accountId] = (byAccount[t.accountId] ?: 0L) + txnIn + txnOut
 
             val mk = monthKey(t.date)
             val yk = yearKey(t.date)
@@ -339,13 +361,10 @@ object Analytics {
             val yb = bucket(yearBuckets, yk, yk)
             mb.count += 1
             yb.count += 1
-            if (t.amountMilli > 0) {
-                mb.inflow += t.amountMilli
-                yb.inflow += t.amountMilli
-            } else if (t.amountMilli < 0) {
-                mb.outflow += t.amountMilli
-                yb.outflow += t.amountMilli
-            }
+            mb.inflow += txnIn
+            yb.inflow += txnIn
+            mb.outflow += txnOut
+            yb.outflow += txnOut
         }
 
         val totalOutAbs = kotlin.math.abs(outflow)

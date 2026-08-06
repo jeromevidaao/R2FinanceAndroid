@@ -165,6 +165,7 @@ class CloudSync(
                             payeeId = s.payeeId,
                             categoryId = s.categoryId,
                             memo = s.memo,
+                            transferAccountId = s.transferAccountId,
                             ynabId = s.ynabId,
                             updatedAt = now,
                         ),

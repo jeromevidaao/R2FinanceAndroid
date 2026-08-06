@@ -138,4 +138,87 @@ class AnalyticsTest {
             Analytics.incomeVsSpendingInsight(points).contains("spending more"),
         )
     }
+
+    @Test
+    fun unapproved_excludedFromSpendingByDefault() {
+        val txns =
+            listOf(
+                txn("2026-08-01", -10000, categoryId = "food"),
+                AnalyticsTxn(
+                    date = "2026-08-02",
+                    amountMilli = -50000,
+                    categoryId = "food",
+                    accountId = "acct-1",
+                    approved = false,
+                ),
+            )
+        val report =
+            Analytics.buildSpendingReport(
+                transactions = txns,
+                mode = PeriodMode.MONTH,
+                periodKey = "2026-08",
+                categoryNames = mapOf("food" to "Food"),
+            )
+        assertEquals(-10000L, report.outflowMilli)
+        assertEquals(1, report.count)
+    }
+
+    @Test
+    fun unapproved_includedWhenApprovedOnlyFalse() {
+        val txns =
+            listOf(
+                txn("2026-08-01", -10000, categoryId = "food"),
+                AnalyticsTxn(
+                    date = "2026-08-02",
+                    amountMilli = -50000,
+                    categoryId = "food",
+                    accountId = "acct-1",
+                    approved = false,
+                ),
+            )
+        val report =
+            Analytics.buildSpendingReport(
+                transactions = txns,
+                mode = PeriodMode.MONTH,
+                periodKey = "2026-08",
+                categoryNames = mapOf("food" to "Food"),
+                approvedOnly = false,
+            )
+        assertEquals(-60000L, report.outflowMilli)
+        assertEquals(2, report.count)
+    }
+
+    @Test
+    fun transferSplitLeg_excludedFromSpending() {
+        val txns =
+            listOf(
+                AnalyticsTxn(
+                    date = "2026-08-01",
+                    amountMilli = -15000,
+                    accountId = "acct-1",
+                    approved = true,
+                    splitLines =
+                        listOf(
+                            AnalyticsSplitLine(
+                                amountMilli = -10000,
+                                categoryId = "food",
+                            ),
+                            AnalyticsSplitLine(
+                                amountMilli = -5000,
+                                transferAccountId = "acct-2",
+                            ),
+                        ),
+                ),
+            )
+        val report =
+            Analytics.buildSpendingReport(
+                transactions = txns,
+                mode = PeriodMode.MONTH,
+                periodKey = "2026-08",
+                categoryNames = mapOf("food" to "Food"),
+            )
+        assertEquals(-10000L, report.outflowMilli)
+        assertEquals(1, report.byCategory.size)
+        assertEquals(-10000L, report.byCategory[0].amountMilli)
+    }
 }
