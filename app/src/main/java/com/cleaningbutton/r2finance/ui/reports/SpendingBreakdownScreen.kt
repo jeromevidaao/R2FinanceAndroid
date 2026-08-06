@@ -231,7 +231,7 @@ fun SpendingBreakdownScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Text(
-                                Money.format(report.outflowMilli),
+                                Money.formatSpend(report.outflowMilli),
                                 style = MaterialTheme.typography.headlineMedium,
                                 fontWeight = FontWeight.Bold,
                             )

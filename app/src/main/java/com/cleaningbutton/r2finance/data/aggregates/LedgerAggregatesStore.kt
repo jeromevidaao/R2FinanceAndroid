@@ -13,6 +13,7 @@ import com.cleaningbutton.r2finance.domain.AnalyticsSplitLine
 import com.cleaningbutton.r2finance.domain.AnalyticsTxn
 import com.cleaningbutton.r2finance.domain.CategoryColors
 import com.cleaningbutton.r2finance.domain.ClearedStatus
+import com.cleaningbutton.r2finance.domain.DomainRules
 import com.cleaningbutton.r2finance.domain.PeriodMode
 import com.cleaningbutton.r2finance.domain.PresetId
 import com.cleaningbutton.r2finance.domain.SpendingReport
@@ -186,7 +187,7 @@ class LedgerAggregatesStore(
                 groupNames = s.groupNames,
                 payeeNames = s.payeeNames,
                 accountNames = s.accountNames,
-                approvedOnly = true,
+                approvedOnly = false,
             )
     }
 }
@@ -270,11 +271,17 @@ object AggregatesBuilder {
                 groupNames = groupNames,
                 payeeNames = payeeNames,
                 accountNames = accountNames,
-                approvedOnly = true,
+                // Include unapproved so Reflect is not $0 while spend sits in inbox.
+                approvedOnly = false,
             )
 
+        // Cap cached months (recent + selected) — full history is available on demand.
         val monthKeysToCache =
-            (months + reflectMonthKey + Analytics.lastNMonthKeys(reflectMonthKey, 6))
+            (
+                Analytics.lastNMonthKeys(reflectMonthKey, 18) +
+                    reflectMonthKey +
+                    months.take(6)
+                )
                 .toSet()
                 .filter { it.isNotBlank() }
 
@@ -325,7 +332,18 @@ object AggregatesBuilder {
         val open = accountsWithBal
         val onBudget = open.filter { it.account.onBudget }
         val tracking = open.filter { !it.account.onBudget }
-        val inboxCount = snap.transactions.count { !it.approved }
+        val acctOnBudget = snap.accounts.associate { it.id to it.onBudget }
+        val inboxCount =
+            snap.transactions.count { t ->
+                DomainRules.isInboxItem(
+                    approved = t.approved,
+                    onBudget = acctOnBudget[t.accountId] ?: true,
+                    categoryId = t.categoryId,
+                    hasSubtransactions = subsByTxn[t.id].orEmpty().isNotEmpty(),
+                    isTransfer = t.transferAccountId != null,
+                    categoryName = t.categoryId?.let { catNames[it] },
+                )
+            }
 
         return LedgerAggregates(
             ready = true,
@@ -387,11 +405,15 @@ object AggregatesBuilder {
                 groupNames = groupNames,
                 payeeNames = payeeNames,
                 accountNames = accountNames,
-                approvedOnly = true,
+                approvedOnly = false,
             )
 
         val monthKeys =
-            (months + reflectMonthKey + Analytics.lastNMonthKeys(reflectMonthKey, 6))
+            (
+                Analytics.lastNMonthKeys(reflectMonthKey, 18) +
+                    reflectMonthKey +
+                    months.take(6)
+                )
                 .toSet()
                 .filter { it.isNotBlank() }
         val monthReports = monthKeys.associateWith { report(PeriodMode.MONTH, it) }

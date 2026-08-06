@@ -174,7 +174,7 @@ fun ReportsScreen(
                                 }
 
                                 Text(
-                                    Money.format(report.outflowMilli),
+                                    Money.formatSpend(report.outflowMilli),
                                     style = MaterialTheme.typography.headlineMedium,
                                     fontWeight = FontWeight.Bold,
                                 )
@@ -306,7 +306,8 @@ internal fun CategoryRow(
                 style = MaterialTheme.typography.bodyMedium,
             )
             Text(
-                Money.format(amountMilli),
+                // Category spend rows are negative milliunits; show positive for Reflect.
+                Money.formatSpend(amountMilli),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
             )

@@ -140,7 +140,9 @@ class AnalyticsTest {
     }
 
     @Test
-    fun unapproved_excludedFromSpendingByDefault() {
+    fun unapproved_includedInSpendingByDefault() {
+        // R2Finance Reflect includes inbox outflows so current month is not $0
+        // while rows still sit in Spending/to-approve.
         val txns =
             listOf(
                 txn("2026-08-01", -10000, categoryId = "food"),
@@ -158,34 +160,34 @@ class AnalyticsTest {
                 mode = PeriodMode.MONTH,
                 periodKey = "2026-08",
                 categoryNames = mapOf("food" to "Food"),
-            )
-        assertEquals(-10000L, report.outflowMilli)
-        assertEquals(1, report.count)
-    }
-
-    @Test
-    fun unapproved_includedWhenApprovedOnlyFalse() {
-        val txns =
-            listOf(
-                txn("2026-08-01", -10000, categoryId = "food"),
-                AnalyticsTxn(
-                    date = "2026-08-02",
-                    amountMilli = -50000,
-                    categoryId = "food",
-                    accountId = "acct-1",
-                    approved = false,
-                ),
-            )
-        val report =
-            Analytics.buildSpendingReport(
-                transactions = txns,
-                mode = PeriodMode.MONTH,
-                periodKey = "2026-08",
-                categoryNames = mapOf("food" to "Food"),
-                approvedOnly = false,
             )
         assertEquals(-60000L, report.outflowMilli)
         assertEquals(2, report.count)
+    }
+
+    @Test
+    fun unapproved_excludedWhenApprovedOnlyTrue() {
+        val txns =
+            listOf(
+                txn("2026-08-01", -10000, categoryId = "food"),
+                AnalyticsTxn(
+                    date = "2026-08-02",
+                    amountMilli = -50000,
+                    categoryId = "food",
+                    accountId = "acct-1",
+                    approved = false,
+                ),
+            )
+        val report =
+            Analytics.buildSpendingReport(
+                transactions = txns,
+                mode = PeriodMode.MONTH,
+                periodKey = "2026-08",
+                categoryNames = mapOf("food" to "Food"),
+                approvedOnly = true,
+            )
+        assertEquals(-10000L, report.outflowMilli)
+        assertEquals(1, report.count)
     }
 
     @Test

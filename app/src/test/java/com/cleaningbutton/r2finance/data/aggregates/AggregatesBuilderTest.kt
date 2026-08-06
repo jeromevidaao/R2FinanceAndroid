@@ -52,16 +52,16 @@ class AggregatesBuilderTest {
         assertTrue(agg.ready)
         assertEquals(5, agg.txnCount)
         assertNotNull(agg.reflectReport)
-        // Unapproved + transfer excluded from current-month outflow
-        assertEquals(-10_000_00L, agg.reflectReport!!.outflowMilli)
+        // Transfer excluded; unapproved included so Reflect is not $0 with inbox spend
+        assertEquals(-10_500_00L, agg.reflectReport!!.outflowMilli)
         assertTrue(agg.presetReports.containsKey(PresetId.LAST_3.key))
         assertTrue(agg.monthReports.containsKey(ym))
         assertEquals(1, agg.home.inboxCount)
         assertTrue(agg.incomeTrend.isNotEmpty())
 
         val last3 = agg.presetReports[PresetId.LAST_3.key]!!
-        // Both approved outflows in range
-        assertEquals(-12_000_00L, last3.outflowMilli)
+        // Approved + unapproved outflows in range (transfer still excluded)
+        assertEquals(-12_500_00L, last3.outflowMilli)
     }
 
     @Test

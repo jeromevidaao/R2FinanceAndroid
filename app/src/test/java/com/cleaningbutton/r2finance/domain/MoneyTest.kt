@@ -36,7 +36,7 @@ class DomainRulesTest {
     }
 
     @Test
-    fun inbox_unapproved_only_approve_without_category_leaves() {
+    fun inbox_unapproved_and_uncategorized() {
         // Unapproved always in Spending list (even with category).
         assertTrue(
             DomainRules.isInboxItem(
@@ -46,8 +46,8 @@ class DomainRulesTest {
                 hasSubtransactions = false,
             ),
         )
-        // Approve without category → leaves list.
-        assertFalse(
+        // Approved but uncategorized stays in needs-attention.
+        assertTrue(
             DomainRules.isInboxItem(
                 approved = true,
                 onBudget = true,
@@ -55,7 +55,7 @@ class DomainRulesTest {
                 hasSubtransactions = false,
             ),
         )
-        assertFalse(
+        assertTrue(
             DomainRules.isInboxItem(
                 approved = true,
                 onBudget = true,
@@ -64,6 +64,7 @@ class DomainRulesTest {
                 categoryName = "Uncategorized",
             ),
         )
+        // Categorized + approved leaves the list.
         assertFalse(
             DomainRules.isInboxItem(
                 approved = true,

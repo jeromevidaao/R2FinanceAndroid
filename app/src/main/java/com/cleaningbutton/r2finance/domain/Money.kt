@@ -34,4 +34,11 @@ object Money {
         runCatching { nf.currency = Currency.getInstance(currencyCode) }
         return nf.format(toMajorDecimal(milliunits))
     }
+
+    /** Absolute currency for "Total spending" style labels (always positive). */
+    fun formatSpend(
+        outflowMilli: Long,
+        currencyCode: String = "USD",
+        locale: Locale = Locale.US,
+    ): String = format(kotlin.math.abs(outflowMilli), currencyCode, locale)
 }

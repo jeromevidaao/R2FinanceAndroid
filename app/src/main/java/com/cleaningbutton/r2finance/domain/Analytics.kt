@@ -108,6 +108,20 @@ object Analytics {
             .toList()
             .asReversed()
 
+    /**
+     * Months that have at least one non-transfer outflow (any approval state).
+     * Used so Reflect does not land on an empty "current month" with $0 while
+     * earlier months still have spending.
+     */
+    fun listMonthsWithOutflow(txns: List<AnalyticsTxn>): List<String> =
+        txns
+            .asSequence()
+            .filter { it.transferAccountId == null && it.amountMilli < 0 }
+            .map { monthKey(it.date) }
+            .toSortedSet()
+            .toList()
+            .asReversed()
+
     fun listYears(txns: List<AnalyticsTxn>): List<String> =
         txns
             .asSequence()
@@ -285,8 +299,13 @@ object Analytics {
         payeeNames: Map<String, String> = emptyMap(),
         accountNames: Map<String, String> = emptyMap(),
         now: java.time.LocalDate = java.time.LocalDate.now(),
-        /** YNAB Reflect excludes unapproved; default true. */
-        approvedOnly: Boolean = true,
+        /**
+         * When true, only approved rows count (strict YNAB Reflect).
+         * Default **false**: R2Finance includes unapproved (inbox) outflows so
+         * Reflect is not $0 while spend still sits in Spending/to-approve.
+         * Transfers are always excluded.
+         */
+        approvedOnly: Boolean = false,
     ): SpendingReport {
         val bounds = resolveDateBounds(mode, periodKey, now)
         val periodTxns =
@@ -320,6 +339,11 @@ object Analytics {
                     if (line.amountMilli > 0) txnIn += line.amountMilli
                     if (line.amountMilli < 0) txnOut += line.amountMilli
                 }
+                // Defensive: incomplete split rows in Room must not zero a real parent outflow.
+                if (txnIn == 0L && txnOut == 0L) {
+                    if (t.amountMilli > 0) txnIn = t.amountMilli
+                    if (t.amountMilli < 0) txnOut = t.amountMilli
+                }
             } else {
                 if (t.amountMilli > 0) txnIn = t.amountMilli
                 if (t.amountMilli < 0) txnOut = t.amountMilli
@@ -328,7 +352,7 @@ object Analytics {
             outflow += txnOut
 
             val spendLines =
-                if (hasSplits) {
+                if (hasSplits && nonTransferSubs.any { it.amountMilli != 0L }) {
                     nonTransferSubs.filter { it.amountMilli < 0 }
                 } else if (t.amountMilli < 0) {
                     listOf(
