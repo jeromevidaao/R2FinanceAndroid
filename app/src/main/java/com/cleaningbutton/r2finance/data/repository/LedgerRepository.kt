@@ -284,6 +284,13 @@ class LedgerRepository(
         }
     }
 
+    /** Bulk categorize (same category on many inbox rows). Marks approved. */
+    suspend fun setCategoryMany(transactionIds: Collection<String>, categoryId: String?) {
+        for (id in transactionIds) {
+            setCategory(id, categoryId)
+        }
+    }
+
     suspend fun approve(transactionId: String) {
         val txn = txns.getById(transactionId) ?: return
         txns.update(
@@ -293,6 +300,57 @@ class LedgerRepository(
                 syncStatus = SyncStatus.PENDING_PUSH,
             ),
         )
+    }
+
+    suspend fun approveMany(transactionIds: Collection<String>) {
+        for (id in transactionIds) {
+            approve(id)
+        }
+    }
+
+    /**
+     * Detail edit for inbox / register: memo, amount, optional payee rename.
+     * Offline-first Room write (PENDING_PUSH).
+     */
+    suspend fun updateTransactionDetails(
+        transactionId: String,
+        amountMilli: Long? = null,
+        memo: String? = null,
+        clearMemo: Boolean = false,
+        payeeName: String? = null,
+        categoryId: String? = null,
+        setCategory: Boolean = false,
+        approved: Boolean? = null,
+    ) {
+        val txn = txns.getById(transactionId) ?: return
+        var payeeId = txn.payeeId
+        if (payeeName != null) {
+            val trimmed = payeeName.trim()
+            payeeId = if (trimmed.isEmpty()) {
+                null
+            } else {
+                ensurePayee(txn.planId, trimmed).id
+            }
+        }
+        val updated = txn.copy(
+            amountMilli = amountMilli ?: txn.amountMilli,
+            memo = when {
+                clearMemo -> null
+                memo != null -> memo.ifBlank { null }
+                else -> txn.memo
+            },
+            payeeId = payeeId,
+            categoryId = if (setCategory) categoryId else txn.categoryId,
+            approved = approved ?: txn.approved,
+            updatedAt = System.currentTimeMillis(),
+            syncStatus = SyncStatus.PENDING_PUSH,
+        )
+        txns.update(updated)
+        if (setCategory && payeeId != null && categoryId != null) {
+            payees.upsertMemory(
+                PayeeCategoryMemoryEntity(updated.planId, payeeId, categoryId),
+            )
+        }
     }
 
     /** Categories suitable for the categorize picker (hide internal / CC payments / hidden). */

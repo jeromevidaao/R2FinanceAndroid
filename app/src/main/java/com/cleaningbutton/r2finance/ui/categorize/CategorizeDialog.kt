@@ -31,14 +31,14 @@ import com.cleaningbutton.r2finance.domain.Money
 import kotlinx.coroutines.launch
 
 /**
- * Shared categorize picker: offline-first Room write (PENDING_PUSH).
- * ConnectivityMonitor / manual Sync uploads to DDB; YNAB is backend later.
+ * Category picker for one or many transactions (bulk).
+ * Offline-first Room write (PENDING_PUSH). ConnectivityMonitor flushes later.
  */
 @Composable
 fun CategorizeDialog(
     container: AppContainer,
     planId: String,
-    target: TransactionRow,
+    targets: List<TransactionRow>,
     onDismiss: () -> Unit,
     onDone: (message: String?) -> Unit = {},
 ) {
@@ -48,6 +48,9 @@ fun CategorizeDialog(
     var query by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+
+    val single = targets.singleOrNull()
+    val bulk = targets.size > 1
 
     LaunchedEffect(planId) {
         categories = container.ledger.listAssignableCategories(planId)
@@ -70,25 +73,40 @@ fun CategorizeDialog(
 
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
-        title = { Text("Choose category") },
+        title = {
+            Text(
+                when {
+                    bulk -> "Categorize ${targets.size} transactions"
+                    single?.txn?.categoryId != null -> "Change category"
+                    else -> "Categorize"
+                },
+            )
+        },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    buildString {
-                        append(target.payeeName ?: "No payee")
-                        append(" · ")
-                        append(target.txn.date)
-                        append(" · ")
-                        append(Money.format(target.txn.amountMilli))
+                    if (bulk) {
+                        val net = targets.sumOf { it.txn.amountMilli }
+                        "${targets.size} selected · net ${Money.format(net)}"
+                    } else {
+                        buildString {
+                            append(single?.payeeName ?: "No payee")
+                            append(" · ")
+                            append(single?.txn?.date.orEmpty())
+                            append(" · ")
+                            append(Money.format(single?.txn?.amountMilli ?: 0L))
+                        }
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                target.categoryName?.let {
-                    Text(
-                        "Current: $it",
-                        style = MaterialTheme.typography.labelMedium,
-                    )
+                if (!bulk) {
+                    single?.categoryName?.let {
+                        Text(
+                            "Current: $it",
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
                 }
                 OutlinedTextField(
                     value = query,
@@ -135,20 +153,26 @@ fun CategorizeDialog(
                                         scope.launch {
                                             busy = true
                                             error = null
-                                            // Room only — works in airplane mode for hours.
-                                            container.ledger.setCategory(target.txn.id, cat.id)
-                                            // Best-effort flush if already online (no UI wait on fail).
+                                            val ids = targets.map { it.txn.id }
+                                            container.ledger.setCategoryMany(ids, cat.id)
                                             if (container.connectivityMonitor.online.value) {
                                                 runCatching {
                                                     container.syncCoordinator.syncWhenOnline(planId)
                                                 }
                                             }
                                             busy = false
+                                            val offline =
+                                                !container.connectivityMonitor.online.value
                                             onDone(
-                                                if (container.connectivityMonitor.online.value) {
-                                                    "Categorized · ${cat.name}"
-                                                } else {
-                                                    "Categorized · ${cat.name} · offline, uploads later"
+                                                when {
+                                                    bulk && offline ->
+                                                        "Categorized ${ids.size} · ${cat.name} · offline"
+                                                    bulk ->
+                                                        "Categorized ${ids.size} · ${cat.name}"
+                                                    offline ->
+                                                        "Categorized · ${cat.name} · offline, uploads later"
+                                                    else ->
+                                                        "Categorized · ${cat.name}"
                                                 },
                                             )
                                             onDismiss()
@@ -164,5 +188,23 @@ fun CategorizeDialog(
         confirmButton = {
             TextButton(onClick = onDismiss, enabled = !busy) { Text("Close") }
         },
+    )
+}
+
+/** Single-target convenience wrapper (register, etc.). */
+@Composable
+fun CategorizeDialog(
+    container: AppContainer,
+    planId: String,
+    target: TransactionRow,
+    onDismiss: () -> Unit,
+    onDone: (message: String?) -> Unit = {},
+) {
+    CategorizeDialog(
+        container = container,
+        planId = planId,
+        targets = listOf(target),
+        onDismiss = onDismiss,
+        onDone = onDone,
     )
 }
