@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -33,9 +34,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,19 +43,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cleaningbutton.r2finance.data.AppContainer
-import com.cleaningbutton.r2finance.data.cloud.SyncCoordinator
-import com.cleaningbutton.r2finance.data.local.entity.AccountEntity
-import com.cleaningbutton.r2finance.data.local.entity.CategoryEntity
-import com.cleaningbutton.r2finance.data.local.entity.CategoryGroupEntity
-import com.cleaningbutton.r2finance.data.local.entity.PayeeEntity
-import com.cleaningbutton.r2finance.data.local.entity.TransactionEntity
-import com.cleaningbutton.r2finance.domain.Analytics
-import com.cleaningbutton.r2finance.domain.AnalyticsTxn
 import com.cleaningbutton.r2finance.domain.CategoryColors
 import com.cleaningbutton.r2finance.domain.Money
-import com.cleaningbutton.r2finance.domain.PeriodMode
 import com.cleaningbutton.r2finance.domain.TrendPoint
-import kotlinx.coroutines.flow.combine
 
 internal fun parseHexColor(hex: String): Color {
     val h = hex.removePrefix("#")
@@ -70,266 +58,201 @@ internal fun parseHexColor(hex: String): Color {
     )
 }
 
-internal data class LedgerSnap(
-    val transactions: List<TransactionEntity> = emptyList(),
-    val categories: List<CategoryEntity> = emptyList(),
-    val groups: List<CategoryGroupEntity> = emptyList(),
-    val payees: List<PayeeEntity> = emptyList(),
-    val accounts: List<AccountEntity> = emptyList(),
-)
-
-internal fun TransactionEntity.toAnalytics(groupId: String?): AnalyticsTxn =
-    AnalyticsTxn(
-        date = date,
-        amountMilli = amountMilli,
-        categoryId = categoryId,
-        categoryGroupId = groupId,
-        payeeId = payeeId,
-        accountId = accountId,
-        transferAccountId = transferAccountId,
-        approved = approved,
-    )
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReportsScreen(
     container: AppContainer,
     onOpenSpendingBreakdown: () -> Unit,
 ) {
-    var planId by remember { mutableStateOf(SyncCoordinator.DEFAULT_PLAN_ID) }
-
     LaunchedEffect(Unit) {
-        planId = container.ledger.ensureDefaultPlan().id
+        val planId = container.ledger.ensureDefaultPlan().id
+        container.aggregates.start(planId)
         container.syncCoordinator.ensureHydrated(planId)
     }
 
-    val ledgerState by remember(planId) {
-        combine(
-            container.ledger.observePlanTransactions(planId),
-            container.ledger.observeCategories(planId),
-            container.ledger.observeCategoryGroups(planId),
-            container.ledger.observePayees(planId),
-            container.ledger.observeAccountsWithBalances(planId),
-        ) { txns, cats, groups, payees, accts ->
-            LedgerSnap(
-                transactions = txns,
-                categories = cats,
-                groups = groups,
-                payees = payees,
-                accounts = accts.map { it.account },
-            )
-        }
-    }.collectAsStateWithLifecycle(initialValue = LedgerSnap())
-
-    val analyticsTxns =
-        remember(ledgerState.transactions, ledgerState.categories) {
-            val catGroup = ledgerState.categories.associate { it.id to it.categoryGroupId }
-            ledgerState.transactions.map { t -> t.toAnalytics(catGroup[t.categoryId]) }
-        }
-
-    val colorById =
-        remember(ledgerState.categories) {
-            ledgerState.categories.mapNotNull { c ->
-                val hex = c.color
-                if (CategoryColors.isHex(hex)) c.id to hex!! else null
-            }.toMap()
-        }
-
-    val monthKey =
-        remember(analyticsTxns) {
-            val cur = Analytics.currentMonthKey()
-            val months = Analytics.listMonths(analyticsTxns)
-            when {
-                months.isEmpty() -> cur
-                cur in months -> cur
-                else -> months.first()
-            }
-        }
-
-    val report =
-        remember(analyticsTxns, monthKey, ledgerState) {
-            Analytics.buildSpendingReport(
-                transactions = analyticsTxns,
-                mode = PeriodMode.MONTH,
-                periodKey = monthKey,
-                categoryNames = ledgerState.categories.associate { it.id to it.name },
-                groupNames = ledgerState.groups.associate { it.id to it.name },
-                payeeNames = ledgerState.payees.associate { it.id to it.name },
-                accountNames = ledgerState.accounts.associate { it.id to it.name },
-            )
-        }
-
+    // Precomputed on Default in LedgerAggregatesStore — no main-thread scan.
+    val agg by container.aggregates.state.collectAsStateWithLifecycle()
+    val report = agg.reflectReport
     val stack =
-        remember(report, colorById) {
-            CategoryColors.buildStack(report.byCategory, colorById, topN = 5)
+        if (report != null) {
+            CategoryColors.buildStack(report.byCategory, agg.colorById, topN = 5)
+        } else {
+            emptyList()
         }
-
-    val incomeTrend: List<TrendPoint> =
-        remember(analyticsTxns, monthKey, ledgerState) {
-            Analytics.lastNMonthKeys(monthKey, 6).map { ym ->
-                val r =
-                    Analytics.buildSpendingReport(
-                        transactions = analyticsTxns,
-                        mode = PeriodMode.MONTH,
-                        periodKey = ym,
-                        categoryNames = ledgerState.categories.associate { it.id to it.name },
-                        groupNames = ledgerState.groups.associate { it.id to it.name },
-                        payeeNames = ledgerState.payees.associate { it.id to it.name },
-                        accountNames = ledgerState.accounts.associate { it.id to it.name },
-                    )
-                TrendPoint(
-                    key = ym,
-                    label = r.periodLabel,
-                    inflowMilli = r.inflowMilli,
-                    outflowMilli = r.outflowMilli,
-                    netMilli = r.netMilli,
-                    count = r.count,
-                )
-            }
-        }
-
-    val insight = remember(incomeTrend) { Analytics.incomeVsSpendingInsight(incomeTrend) }
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("Reflect") }) },
     ) { padding ->
-        if (analyticsTxns.isEmpty()) {
-            Column(
-                Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(24.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(
-                    "No transactions yet.\nSync from Accounts to load your ledger.",
-                    style = MaterialTheme.typography.bodyLarge,
-                )
+        when {
+            !agg.ready && report == null -> {
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                        .padding(24.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    CircularProgressIndicator()
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "Computing spending…",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
-            return@Scaffold
-        }
-
-        LazyColumn(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            item {
-                Text(
-                    "How money was spent · income vs spending",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            agg.ready && agg.txnCount == 0 -> {
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                        .padding(24.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        "No transactions yet.\nSync from Accounts to load your ledger.",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                }
             }
-
-            item {
-                Card(
+            report != null -> {
+                LazyColumn(
                     modifier =
                         Modifier
-                            .fillMaxWidth()
-                            .clickable(onClick = onOpenSpendingBreakdown),
-                    colors =
-                        CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surface,
-                        ),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                            .fillMaxSize()
+                            .padding(padding),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    Column(
-                        Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
+                    item {
+                        Text(
+                            "How money was spent · income vs spending",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+
+                    item {
+                        Card(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable(onClick = onOpenSpendingBreakdown),
+                            colors =
+                                CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surface,
+                                ),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
                         ) {
-                            Column(Modifier.weight(1f)) {
+                            Column(
+                                Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            "Spending Breakdown",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                        )
+                                        Text(
+                                            report.periodLabel,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                        contentDescription = "Open spending breakdown",
+                                    )
+                                }
+
                                 Text(
-                                    "Spending Breakdown",
+                                    Money.format(report.outflowMilli),
+                                    style = MaterialTheme.typography.headlineMedium,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                Text(
+                                    "Total spending",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+
+                                if (stack.isNotEmpty()) {
+                                    StackedBar(segments = stack)
+                                    stack.forEach { seg ->
+                                        CategoryRow(
+                                            name = seg.name,
+                                            amountMilli = seg.amountMilli,
+                                            colorHex = seg.colorHex,
+                                        )
+                                    }
+                                } else {
+                                    Text(
+                                        "No spending in this period.",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors =
+                                CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surface,
+                                ),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                        ) {
+                            Column(
+                                Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                Text(
+                                    "Income vs Spending",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.SemiBold,
                                 )
                                 Text(
-                                    report.periodLabel,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    agg.incomeInsight,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Medium,
                                 )
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                ) {
+                                    LegendDot(CategoryColors.INCOME, "Income")
+                                    LegendDot(CategoryColors.SPENDING, "Spending")
+                                }
+                                IncomeSpendingChart(points = agg.incomeTrend)
                             }
-                            Icon(
-                                Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                contentDescription = "Open spending breakdown",
-                            )
-                        }
-
-                        Text(
-                            Money.format(report.outflowMilli),
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Text(
-                            "Total spending",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-
-                        if (stack.isNotEmpty()) {
-                            StackedBar(segments = stack)
-                            stack.forEach { seg ->
-                                CategoryRow(
-                                    name = seg.name,
-                                    amountMilli = seg.amountMilli,
-                                    colorHex = seg.colorHex,
-                                )
-                            }
-                        } else {
-                            Text(
-                                "No spending in this period.",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
                         }
                     }
+
+                    item { Spacer(Modifier.height(24.dp)) }
                 }
             }
-
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors =
-                        CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surface,
-                        ),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+            else -> {
+                // Defensive fallback
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                        .padding(24.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Column(
-                        Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        Text(
-                            "Income vs Spending",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(
-                            insight,
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.Medium,
-                        )
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        ) {
-                            LegendDot(CategoryColors.INCOME, "Income")
-                            LegendDot(CategoryColors.SPENDING, "Spending")
-                        }
-                        IncomeSpendingChart(points = incomeTrend)
-                    }
+                    CircularProgressIndicator()
                 }
             }
-
-            item { Spacer(Modifier.height(24.dp)) }
         }
     }
 }

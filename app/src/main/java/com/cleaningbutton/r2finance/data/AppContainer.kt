@@ -1,6 +1,7 @@
 package com.cleaningbutton.r2finance.data
 
 import android.content.Context
+import com.cleaningbutton.r2finance.data.aggregates.LedgerAggregatesStore
 import com.cleaningbutton.r2finance.data.auth.AuthApi
 import com.cleaningbutton.r2finance.data.auth.SessionStore
 import com.cleaningbutton.r2finance.data.cloud.CloudApi
@@ -10,9 +11,17 @@ import com.cleaningbutton.r2finance.data.cloud.SyncCoordinator
 import com.cleaningbutton.r2finance.data.local.R2FinanceDatabase
 import com.cleaningbutton.r2finance.data.repository.LedgerRepository
 import com.cleaningbutton.r2finance.update.AppUpdateChecker
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class AppContainer(context: Context) {
     private val appContext = context.applicationContext
+    /** Process-scoped work (aggregates, warm-up). Survives Activity recreate. */
+    val applicationScope: CoroutineScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     val database: R2FinanceDatabase = R2FinanceDatabase.get(appContext)
     val ledger: LedgerRepository = LedgerRepository(database)
     val updateChecker: AppUpdateChecker = AppUpdateChecker(appContext)
@@ -25,10 +34,29 @@ class AppContainer(context: Context) {
     val syncCoordinator: SyncCoordinator = SyncCoordinator(appContext, database, cloudSync)
 
     /**
+     * In-memory Reflect / Home / account totals. Built on Default; UI just collects.
+     * Warm-started from [startBackgroundWarmup].
+     */
+    val aggregates: LedgerAggregatesStore = LedgerAggregatesStore(ledger, applicationScope)
+
+    /**
      * Auto-flush offline queue when the network returns.
      * Started from [com.cleaningbutton.r2finance.R2FinanceApplication].
      */
     val connectivityMonitor: ConnectivityMonitor = ConnectivityMonitor(appContext) {
         syncCoordinator.syncWhenOnline()
+    }
+
+    /**
+     * Warm aggregates + hydrate flag as soon as the process starts so Home/Reflect
+     * open with precomputed numbers instead of scanning the ledger on the UI thread.
+     */
+    fun startBackgroundWarmup() {
+        applicationScope.launch {
+            val plan = ledger.ensureDefaultPlan()
+            aggregates.start(plan.id)
+            // Local Room first; cloud hydrate if empty (same as screens).
+            syncCoordinator.ensureHydrated(plan.id)
+        }
     }
 }

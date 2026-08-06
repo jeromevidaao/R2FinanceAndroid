@@ -17,6 +17,9 @@ Android (Room)  ◄── HTTPS ──►  R2FinanceAPI + DynamoDB  ◄── ba
 - Pull DDB → Room after push; **YNAB is backend-only** (EventBridge ~15m / sync tick).
 - Navigate away/back does **not** re-download. Manual Accounts → Sync = push + pull + YNAB tick.
 - Pull preserves local `PENDING_PUSH` rows (phone edits not clobbered by cloud snapshot).
+- **In-memory aggregates:** `LedgerAggregatesStore` precomputes Reflect / Spending Breakdown /
+  Home totals / account balances on a background dispatcher at process start and after ledger
+  changes (debounced). UI screens collect the snapshot — no main-thread full-ledger scans.
 
 ## Phases
 

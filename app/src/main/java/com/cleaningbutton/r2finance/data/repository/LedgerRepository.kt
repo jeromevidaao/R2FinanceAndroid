@@ -68,6 +68,9 @@ class LedgerRepository(
         return plan
     }
 
+    fun observeOpenAccounts(planId: String): Flow<List<AccountEntity>> =
+        accounts.observeOpenAccounts(planId)
+
     fun observeAccountsWithBalances(planId: String): Flow<List<AccountWithBalance>> {
         return accounts.observeOpenAccounts(planId).flatMapLatest { list ->
             if (list.isEmpty()) {
@@ -154,6 +157,10 @@ class LedgerRepository(
     /** Full plan transactions for reports (Room is source of truth). */
     fun observePlanTransactions(planId: String): Flow<List<TransactionEntity>> =
         txns.observeForPlan(planId)
+
+    /** Split lines for analytics (transfer legs excluded in [Analytics]). */
+    fun observePlanSubTransactions(planId: String): Flow<List<SubTransactionEntity>> =
+        txns.observeSubsForPlan(planId)
 
     fun observePayees(planId: String) = payees.observePayees(planId)
 

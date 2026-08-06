@@ -86,12 +86,18 @@ fun AccountsScreen(
     // Process-scoped SyncCoordinator survives navigate → register → back (no re-download).
     LaunchedEffect(Unit) {
         planId = container.ledger.ensureDefaultPlan().id
+        container.aggregates.start(planId)
         sync.ensureHydrated(planId)
     }
 
-    val accounts by remember(planId) {
+    // In-memory balances (single-pass) when ready; Room SUM flows as cold-start fallback.
+    val agg by container.aggregates.state.collectAsStateWithLifecycle()
+    val roomAccounts by remember(planId) {
         container.ledger.observeAccountsWithBalances(planId)
     }.collectAsStateWithLifecycle(initialValue = emptyList())
+
+    val accounts: List<AccountWithBalance> =
+        if (agg.ready) agg.accounts else roomAccounts
 
     val openAccounts = remember(accounts) {
         accounts.filter { !it.account.closed }

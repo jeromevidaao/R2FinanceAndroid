@@ -255,6 +255,16 @@ interface TransactionDao {
     @Query("SELECT * FROM subtransactions WHERE transactionId = :txnId AND deleted = 0")
     suspend fun getSubs(txnId: String): List<SubTransactionEntity>
 
+    /** All non-deleted split lines for a plan (joined via parent txn). */
+    @Query(
+        """
+        SELECT s.* FROM subtransactions s
+        INNER JOIN transactions t ON t.id = s.transactionId
+        WHERE t.planId = :planId AND s.deleted = 0 AND t.deleted = 0
+        """,
+    )
+    fun observeSubsForPlan(planId: String): Flow<List<SubTransactionEntity>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSubs(subs: List<SubTransactionEntity>)
 

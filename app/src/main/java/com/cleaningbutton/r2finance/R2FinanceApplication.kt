@@ -13,6 +13,8 @@ class R2FinanceApplication : Application() {
         container = AppContainer(this)
         // Offline-first: flush PENDING_PUSH → DDB whenever network is/returns available.
         container.connectivityMonitor.start()
+        // Precompute Reflect / Home / balances in memory on a background dispatcher.
+        container.startBackgroundWarmup()
         PushRegistration.ensureChannel(this)
         PushRegistration.subscribeAndRegister(this)
     }

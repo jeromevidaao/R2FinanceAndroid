@@ -32,9 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cleaningbutton.r2finance.R
 import com.cleaningbutton.r2finance.data.AppContainer
-import com.cleaningbutton.r2finance.data.cloud.SyncCoordinator
 import com.cleaningbutton.r2finance.domain.Money
-import kotlinx.coroutines.flow.combine
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -46,33 +44,18 @@ fun HomeScreen(
     onOpenCategories: () -> Unit,
     onOpenMore: () -> Unit,
 ) {
-    var planId by remember { mutableStateOf(SyncCoordinator.DEFAULT_PLAN_ID) }
     var planName by remember { mutableStateOf("R2Finance") }
 
     LaunchedEffect(Unit) {
         val plan = container.ledger.ensureDefaultPlan()
-        planId = plan.id
         planName = plan.name.ifBlank { "R2Finance" }
-        container.syncCoordinator.ensureHydrated(planId)
+        container.aggregates.start(plan.id)
+        container.syncCoordinator.ensureHydrated(plan.id)
     }
 
-    val snap by remember(planId) {
-        combine(
-            container.ledger.observeAccountsWithBalances(planId),
-            container.ledger.observeInboxRows(planId),
-        ) { accounts, inbox ->
-            val open = accounts.filter { !it.account.closed }
-            val onBudget = open.filter { it.account.onBudget }
-            val tracking = open.filter { !it.account.onBudget }
-            HomeSnap(
-                onBudgetTotal = onBudget.sumOf { it.balanceMilli },
-                trackingTotal = tracking.sumOf { it.balanceMilli },
-                onBudgetCount = onBudget.size,
-                trackingCount = tracking.size,
-                inboxCount = inbox.size,
-            )
-        }
-    }.collectAsStateWithLifecycle(initialValue = HomeSnap())
+    // Precomputed balances / inbox count from LedgerAggregatesStore.
+    val agg by container.aggregates.state.collectAsStateWithLifecycle()
+    val home = agg.home
 
     Scaffold(
         topBar = {
@@ -105,19 +88,19 @@ fun HomeScreen(
                     StatCard(
                         modifier = Modifier.weight(1f),
                         label = "On budget",
-                        value = Money.format(snap.onBudgetTotal),
-                        hint = "${snap.onBudgetCount} accounts",
+                        value = if (agg.ready) Money.format(home.onBudgetTotal) else "…",
+                        hint = if (agg.ready) "${home.onBudgetCount} accounts" else "Computing…",
                     )
                     StatCard(
                         modifier = Modifier.weight(1f),
                         label = "Tracking",
-                        value = Money.format(snap.trackingTotal),
-                        hint = "${snap.trackingCount} accounts",
+                        value = if (agg.ready) Money.format(home.trackingTotal) else "…",
+                        hint = if (agg.ready) "${home.trackingCount} accounts" else "Computing…",
                     )
                 }
             }
 
-            if (snap.inboxCount > 0) {
+            if (home.inboxCount > 0) {
                 item {
                     Card(
                         colors = CardDefaults.cardColors(
@@ -130,7 +113,7 @@ fun HomeScreen(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Text(
-                                "${snap.inboxCount} to categorize or approve",
+                                "${home.inboxCount} to categorize or approve",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold,
                             )
@@ -229,11 +212,3 @@ private fun StatCard(
         }
     }
 }
-
-private data class HomeSnap(
-    val onBudgetTotal: Long = 0L,
-    val trackingTotal: Long = 0L,
-    val onBudgetCount: Int = 0,
-    val trackingCount: Int = 0,
-    val inboxCount: Int = 0,
-)
