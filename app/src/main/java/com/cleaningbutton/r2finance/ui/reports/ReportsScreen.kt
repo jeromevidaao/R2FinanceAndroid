@@ -151,7 +151,7 @@ fun ReportsScreen(container: AppContainer) {
     val selectedPeriod = if (periodKey.isNotEmpty()) periodKey else effectiveKey
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Reports") }) },
+        topBar = { TopAppBar(title = { Text("Report") }) },
     ) { padding ->
         if (analyticsTxns.isEmpty()) {
             Column(

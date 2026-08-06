@@ -4,9 +4,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.BarChart
-import androidx.compose.material.icons.filled.Category
-import androidx.compose.material.icons.filled.Inbox
-import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -27,16 +26,18 @@ import com.cleaningbutton.r2finance.R
 import com.cleaningbutton.r2finance.data.AppContainer
 import com.cleaningbutton.r2finance.ui.accounts.AccountsScreen
 import com.cleaningbutton.r2finance.ui.categories.CategoriesScreen
+import com.cleaningbutton.r2finance.ui.home.HomeScreen
 import com.cleaningbutton.r2finance.ui.inbox.InboxScreen
 import com.cleaningbutton.r2finance.ui.more.MoreScreen
 import com.cleaningbutton.r2finance.ui.register.RegisterScreen
 import com.cleaningbutton.r2finance.ui.reports.ReportsScreen
 
 private object Routes {
-    const val Accounts = "accounts"
-    const val Inbox = "inbox"
+    const val Home = "home"
+    const val Spending = "spending"
+    const val Account = "account"
+    const val Report = "report"
     const val Categories = "categories"
-    const val Reports = "reports"
     const val More = "more"
     const val Register = "register/{accountId}"
     fun register(accountId: String) = "register/$accountId"
@@ -48,10 +49,11 @@ fun AppNavHost(container: AppContainer) {
     val backStack by navController.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
     val showBottomBar = route in setOf(
-        Routes.Accounts,
-        Routes.Inbox,
+        Routes.Home,
+        Routes.Spending,
+        Routes.Account,
+        Routes.Report,
         Routes.Categories,
-        Routes.Reports,
         Routes.More,
     )
 
@@ -70,34 +72,28 @@ fun AppNavHost(container: AppContainer) {
             if (showBottomBar) {
                 NavigationBar {
                     NavigationBarItem(
-                        selected = route == Routes.Accounts,
-                        onClick = { go(Routes.Accounts) },
+                        selected = route == Routes.Home,
+                        onClick = { go(Routes.Home) },
+                        icon = { Icon(Icons.Default.Home, contentDescription = null) },
+                        label = { Text(stringResource(R.string.nav_home)) },
+                    )
+                    NavigationBarItem(
+                        selected = route == Routes.Spending,
+                        onClick = { go(Routes.Spending) },
+                        icon = { Icon(Icons.Default.ShoppingCart, contentDescription = null) },
+                        label = { Text(stringResource(R.string.nav_spending)) },
+                    )
+                    NavigationBarItem(
+                        selected = route == Routes.Account,
+                        onClick = { go(Routes.Account) },
                         icon = { Icon(Icons.Default.AccountBalance, contentDescription = null) },
-                        label = { Text(stringResource(R.string.nav_accounts)) },
+                        label = { Text(stringResource(R.string.nav_account)) },
                     )
                     NavigationBarItem(
-                        selected = route == Routes.Inbox,
-                        onClick = { go(Routes.Inbox) },
-                        icon = { Icon(Icons.Default.Inbox, contentDescription = null) },
-                        label = { Text(stringResource(R.string.nav_inbox)) },
-                    )
-                    NavigationBarItem(
-                        selected = route == Routes.Categories,
-                        onClick = { go(Routes.Categories) },
-                        icon = { Icon(Icons.Default.Category, contentDescription = null) },
-                        label = { Text(stringResource(R.string.nav_categories)) },
-                    )
-                    NavigationBarItem(
-                        selected = route == Routes.Reports,
-                        onClick = { go(Routes.Reports) },
+                        selected = route == Routes.Report,
+                        onClick = { go(Routes.Report) },
                         icon = { Icon(Icons.Default.BarChart, contentDescription = null) },
-                        label = { Text(stringResource(R.string.nav_reports)) },
-                    )
-                    NavigationBarItem(
-                        selected = route == Routes.More,
-                        onClick = { go(Routes.More) },
-                        icon = { Icon(Icons.Default.MoreHoriz, contentDescription = null) },
-                        label = { Text(stringResource(R.string.nav_more)) },
+                        label = { Text(stringResource(R.string.nav_report)) },
                     )
                 }
             }
@@ -105,23 +101,33 @@ fun AppNavHost(container: AppContainer) {
     ) { padding ->
         NavHost(
             navController = navController,
-            startDestination = Routes.Accounts,
+            startDestination = Routes.Home,
             modifier = Modifier.padding(padding),
         ) {
-            composable(Routes.Accounts) {
+            composable(Routes.Home) {
+                HomeScreen(
+                    container = container,
+                    onOpenSpending = { go(Routes.Spending) },
+                    onOpenAccounts = { go(Routes.Account) },
+                    onOpenReports = { go(Routes.Report) },
+                    onOpenCategories = { go(Routes.Categories) },
+                    onOpenMore = { go(Routes.More) },
+                )
+            }
+            composable(Routes.Spending) {
+                InboxScreen(container = container)
+            }
+            composable(Routes.Account) {
                 AccountsScreen(
                     container = container,
                     onOpenAccount = { id -> navController.navigate(Routes.register(id)) },
                 )
             }
-            composable(Routes.Inbox) {
-                InboxScreen(container = container)
+            composable(Routes.Report) {
+                ReportsScreen(container = container)
             }
             composable(Routes.Categories) {
                 CategoriesScreen(container = container)
-            }
-            composable(Routes.Reports) {
-                ReportsScreen(container = container)
             }
             composable(Routes.More) {
                 MoreScreen(container = container)
