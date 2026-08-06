@@ -6,6 +6,8 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverter
 import androidx.room.TypeConverters
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.cleaningbutton.r2finance.data.local.dao.AccountDao
 import com.cleaningbutton.r2finance.data.local.dao.CategoryDao
 import com.cleaningbutton.r2finance.data.local.dao.PayeeDao
@@ -56,7 +58,7 @@ class Converters {
         SubTransactionEntity::class,
         ScheduledTransactionEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -71,13 +73,20 @@ abstract class R2FinanceDatabase : RoomDatabase() {
     companion object {
         @Volatile private var instance: R2FinanceDatabase? = null
 
+        private val MIGRATION_1_2 =
+            object : Migration(1, 2) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL("ALTER TABLE categories ADD COLUMN color TEXT")
+                }
+            }
+
         fun get(context: Context): R2FinanceDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext,
                     R2FinanceDatabase::class.java,
                     "r2finance.db",
-                ).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2).build().also { instance = it }
             }
     }
 }

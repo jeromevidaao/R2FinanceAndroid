@@ -104,4 +104,38 @@ class AnalyticsTest {
             )
         assertEquals(listOf("2026-03", "2026-02", "2026-01"), months)
     }
+
+    @Test
+    fun presetLast3_includesRollingMonths() {
+        val now = java.time.LocalDate.of(2026, 8, 15)
+        val txns =
+            listOf(
+                txn("2026-06-01", -1000),
+                txn("2026-07-01", -2000),
+                txn("2026-08-01", -3000),
+                txn("2026-05-01", -9999), // outside last 3
+            )
+        val report =
+            Analytics.buildSpendingReport(
+                transactions = txns,
+                mode = PeriodMode.PRESET,
+                periodKey = PresetId.LAST_3.key,
+                now = now,
+            )
+        assertEquals(-6000L, report.outflowMilli)
+        assertEquals(3, report.monthsCovered)
+        assertEquals("Last 3 Months", report.periodLabel)
+    }
+
+    @Test
+    fun incomeInsight_spendingMore() {
+        val points =
+            listOf(
+                TrendPoint("2026-07", "July", 1000, -5000, -4000, 2),
+                TrendPoint("2026-08", "August", 1000, -5000, -4000, 2),
+            )
+        assertTrue(
+            Analytics.incomeVsSpendingInsight(points).contains("spending more"),
+        )
+    }
 }

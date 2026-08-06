@@ -31,12 +31,14 @@ import com.cleaningbutton.r2finance.ui.inbox.InboxScreen
 import com.cleaningbutton.r2finance.ui.more.MoreScreen
 import com.cleaningbutton.r2finance.ui.register.RegisterScreen
 import com.cleaningbutton.r2finance.ui.reports.ReportsScreen
+import com.cleaningbutton.r2finance.ui.reports.SpendingBreakdownScreen
 
 private object Routes {
     const val Home = "home"
     const val Spending = "spending"
     const val Account = "account"
     const val Report = "report"
+    const val ReportSpending = "report/spending"
     const val Categories = "categories"
     const val More = "more"
     const val Register = "register/{accountId}"
@@ -90,7 +92,7 @@ fun AppNavHost(container: AppContainer) {
                         label = { Text(stringResource(R.string.nav_account)) },
                     )
                     NavigationBarItem(
-                        selected = route == Routes.Report,
+                        selected = route == Routes.Report || route == Routes.ReportSpending,
                         onClick = { go(Routes.Report) },
                         icon = { Icon(Icons.Default.BarChart, contentDescription = null) },
                         label = { Text(stringResource(R.string.nav_report)) },
@@ -124,7 +126,18 @@ fun AppNavHost(container: AppContainer) {
                 )
             }
             composable(Routes.Report) {
-                ReportsScreen(container = container)
+                ReportsScreen(
+                    container = container,
+                    onOpenSpendingBreakdown = {
+                        navController.navigate(Routes.ReportSpending)
+                    },
+                )
+            }
+            composable(Routes.ReportSpending) {
+                SpendingBreakdownScreen(
+                    container = container,
+                    onBack = { navController.popBackStack() },
+                )
             }
             composable(Routes.Categories) {
                 CategoriesScreen(container = container)

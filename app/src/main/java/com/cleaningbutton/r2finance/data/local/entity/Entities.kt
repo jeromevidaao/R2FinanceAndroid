@@ -106,6 +106,8 @@ data class CategoryEntity(
     val internal: Boolean = false,
     val note: String? = null,
     val sortOrder: Int = 0,
+    /** Hex color from cloud DDB (Reflect / charts); null until first sync. */
+    val color: String? = null,
     val ynabId: String? = null,
     val updatedAt: Long = System.currentTimeMillis(),
     val syncStatus: SyncStatus = SyncStatus.LOCAL_ONLY,

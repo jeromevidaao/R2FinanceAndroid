@@ -1,6 +1,7 @@
 package com.cleaningbutton.r2finance.ui.reports
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -8,29 +9,30 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.ScrollableTabRow
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -51,29 +53,49 @@ import com.cleaningbutton.r2finance.data.local.entity.PayeeEntity
 import com.cleaningbutton.r2finance.data.local.entity.TransactionEntity
 import com.cleaningbutton.r2finance.domain.Analytics
 import com.cleaningbutton.r2finance.domain.AnalyticsTxn
+import com.cleaningbutton.r2finance.domain.CategoryColors
 import com.cleaningbutton.r2finance.domain.Money
 import com.cleaningbutton.r2finance.domain.PeriodMode
-import com.cleaningbutton.r2finance.domain.RankRow
-import com.cleaningbutton.r2finance.domain.SpendingReport
 import com.cleaningbutton.r2finance.domain.TrendPoint
 import kotlinx.coroutines.flow.combine
 
-private enum class ReportTab(val label: String) {
-    Overview("Overview"),
-    Categories("Categories"),
-    Groups("Groups"),
-    Payees("Payees"),
-    Accounts("Accounts"),
-    Trends("Trends"),
+internal fun parseHexColor(hex: String): Color {
+    val h = hex.removePrefix("#")
+    val v = h.toLong(16)
+    return Color(
+        red = ((v shr 16) and 0xFF) / 255f,
+        green = ((v shr 8) and 0xFF) / 255f,
+        blue = (v and 0xFF) / 255f,
+        alpha = 1f,
+    )
 }
+
+internal data class LedgerSnap(
+    val transactions: List<TransactionEntity> = emptyList(),
+    val categories: List<CategoryEntity> = emptyList(),
+    val groups: List<CategoryGroupEntity> = emptyList(),
+    val payees: List<PayeeEntity> = emptyList(),
+    val accounts: List<AccountEntity> = emptyList(),
+)
+
+internal fun TransactionEntity.toAnalytics(groupId: String?): AnalyticsTxn =
+    AnalyticsTxn(
+        date = date,
+        amountMilli = amountMilli,
+        categoryId = categoryId,
+        categoryGroupId = groupId,
+        payeeId = payeeId,
+        accountId = accountId,
+        transferAccountId = transferAccountId,
+    )
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ReportsScreen(container: AppContainer) {
+fun ReportsScreen(
+    container: AppContainer,
+    onOpenSpendingBreakdown: () -> Unit,
+) {
     var planId by remember { mutableStateOf(SyncCoordinator.DEFAULT_PLAN_ID) }
-    var mode by remember { mutableStateOf(PeriodMode.MONTH) }
-    var periodKey by remember { mutableStateOf("") }
-    var tabIndex by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(Unit) {
         planId = container.ledger.ensureDefaultPlan().id
@@ -96,51 +118,39 @@ fun ReportsScreen(container: AppContainer) {
                 accounts = accts.map { it.account },
             )
         }
-    }.collectAsStateWithLifecycle(
-        initialValue = LedgerSnap(),
-    )
+    }.collectAsStateWithLifecycle(initialValue = LedgerSnap())
 
     val analyticsTxns =
         remember(ledgerState.transactions, ledgerState.categories) {
             val catGroup = ledgerState.categories.associate { it.id to it.categoryGroupId }
-            ledgerState.transactions.map { t ->
-                t.toAnalytics(catGroup[t.categoryId])
-            }
+            ledgerState.transactions.map { t -> t.toAnalytics(catGroup[t.categoryId]) }
         }
 
-    val months = remember(analyticsTxns) { Analytics.listMonths(analyticsTxns) }
-    val years = remember(analyticsTxns) { Analytics.listYears(analyticsTxns) }
+    val colorById =
+        remember(ledgerState.categories) {
+            ledgerState.categories.mapNotNull { c ->
+                val hex = c.color
+                if (CategoryColors.isHex(hex)) c.id to hex!! else null
+            }.toMap()
+        }
 
-    LaunchedEffect(mode, months, years, analyticsTxns) {
-        periodKey =
-            when (mode) {
-                PeriodMode.ALL -> "all"
-                PeriodMode.YEAR -> {
-                    if (periodKey in years) periodKey
-                    else Analytics.defaultPeriodKey(PeriodMode.YEAR, analyticsTxns)
-                }
-                PeriodMode.MONTH -> {
-                    if (periodKey in months) periodKey
-                    else Analytics.defaultPeriodKey(PeriodMode.MONTH, analyticsTxns)
-                }
-            }
-    }
-
-    val effectiveKey =
-        remember(mode, periodKey, analyticsTxns) {
+    val monthKey =
+        remember(analyticsTxns) {
+            val cur = Analytics.currentMonthKey()
+            val months = Analytics.listMonths(analyticsTxns)
             when {
-                mode == PeriodMode.ALL -> "all"
-                periodKey.isNotEmpty() -> periodKey
-                else -> Analytics.defaultPeriodKey(mode, analyticsTxns)
+                months.isEmpty() -> cur
+                cur in months -> cur
+                else -> months.first()
             }
         }
 
-    val report: SpendingReport =
-        remember(analyticsTxns, mode, effectiveKey, ledgerState) {
+    val report =
+        remember(analyticsTxns, monthKey, ledgerState) {
             Analytics.buildSpendingReport(
                 transactions = analyticsTxns,
-                mode = mode,
-                periodKey = effectiveKey,
+                mode = PeriodMode.MONTH,
+                periodKey = monthKey,
                 categoryNames = ledgerState.categories.associate { it.id to it.name },
                 groupNames = ledgerState.groups.associate { it.id to it.name },
                 payeeNames = ledgerState.payees.associate { it.id to it.name },
@@ -148,10 +158,39 @@ fun ReportsScreen(container: AppContainer) {
             )
         }
 
-    val selectedPeriod = if (periodKey.isNotEmpty()) periodKey else effectiveKey
+    val stack =
+        remember(report, colorById) {
+            CategoryColors.buildStack(report.byCategory, colorById, topN = 5)
+        }
+
+    val incomeTrend: List<TrendPoint> =
+        remember(analyticsTxns, monthKey, ledgerState) {
+            Analytics.lastNMonthKeys(monthKey, 6).map { ym ->
+                val r =
+                    Analytics.buildSpendingReport(
+                        transactions = analyticsTxns,
+                        mode = PeriodMode.MONTH,
+                        periodKey = ym,
+                        categoryNames = ledgerState.categories.associate { it.id to it.name },
+                        groupNames = ledgerState.groups.associate { it.id to it.name },
+                        payeeNames = ledgerState.payees.associate { it.id to it.name },
+                        accountNames = ledgerState.accounts.associate { it.id to it.name },
+                    )
+                TrendPoint(
+                    key = ym,
+                    label = r.periodLabel,
+                    inflowMilli = r.inflowMilli,
+                    outflowMilli = r.outflowMilli,
+                    netMilli = r.netMilli,
+                    count = r.count,
+                )
+            }
+        }
+
+    val insight = remember(incomeTrend) { Analytics.incomeVsSpendingInsight(incomeTrend) }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Report") }) },
+        topBar = { TopAppBar(title = { Text("Reflect") }) },
     ) { padding ->
         if (analyticsTxns.isEmpty()) {
             Column(
@@ -176,169 +215,115 @@ fun ReportsScreen(container: AppContainer) {
                     .fillMaxSize()
                     .padding(padding),
             contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             item {
                 Text(
-                    "YNAB-style spending analytics",
+                    "How money was spent · income vs spending",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 
             item {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                Card(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = onOpenSpendingBreakdown),
+                    colors =
+                        CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surface,
+                        ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
                 ) {
-                    PeriodMode.entries.forEach { m ->
-                        FilterChip(
-                            selected = mode == m,
-                            onClick = { mode = m },
-                            label = {
+                    Column(
+                        Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
                                 Text(
-                                    when (m) {
-                                        PeriodMode.MONTH -> "Month"
-                                        PeriodMode.YEAR -> "Year"
-                                        PeriodMode.ALL -> "All time"
-                                    },
+                                    "Spending Breakdown",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold,
                                 )
-                            },
+                                Text(
+                                    report.periodLabel,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Icon(
+                                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = "Open spending breakdown",
+                            )
+                        }
+
+                        Text(
+                            Money.format(report.outflowMilli),
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold,
                         )
+                        Text(
+                            "Total spending",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+
+                        if (stack.isNotEmpty()) {
+                            StackedBar(segments = stack)
+                            stack.forEach { seg ->
+                                CategoryRow(
+                                    name = seg.name,
+                                    amountMilli = seg.amountMilli,
+                                    colorHex = seg.colorHex,
+                                )
+                            }
+                        } else {
+                            Text(
+                                "No spending in this period.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
 
-            if (mode == PeriodMode.MONTH && months.isNotEmpty()) {
-                item {
-                    PeriodChips(
-                        options = months,
-                        selected = selectedPeriod,
-                        labelOf = { Analytics.formatPeriodLabel(PeriodMode.MONTH, it) },
-                        onSelect = { periodKey = it },
-                    )
-                }
-            }
-            if (mode == PeriodMode.YEAR && years.isNotEmpty()) {
-                item {
-                    PeriodChips(
-                        options = years,
-                        selected = selectedPeriod,
-                        labelOf = { it },
-                        onSelect = { periodKey = it },
-                    )
-                }
-            }
-
             item {
-                Text(
-                    report.periodLabel,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-
-            item {
-                StatGrid(report)
-            }
-
-            item {
-                ScrollableTabRow(
-                    selectedTabIndex = tabIndex,
-                    edgePadding = 0.dp,
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors =
+                        CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surface,
+                        ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
                 ) {
-                    ReportTab.entries.forEachIndexed { i, t ->
-                        Tab(
-                            selected = tabIndex == i,
-                            onClick = { tabIndex = i },
-                            text = { Text(t.label) },
+                    Column(
+                        Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text(
+                            "Income vs Spending",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
                         )
-                    }
-                }
-            }
-
-            when (ReportTab.entries[tabIndex]) {
-                ReportTab.Overview -> {
-                    item {
-                        SectionCard(title = trendTitle(mode, selectedPeriod)) {
-                            MiniTrendChart(
-                                points = overviewTrend(report, mode, analyticsTxns, ledgerState),
-                                showInflow = mode != PeriodMode.MONTH,
-                            )
+                        Text(
+                            insight,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        ) {
+                            LegendDot(CategoryColors.INCOME, "Income")
+                            LegendDot(CategoryColors.SPENDING, "Spending")
                         }
-                    }
-                    item {
-                        SectionCard(title = "Top categories") {
-                            RankList(report.byCategory.take(8), showShare = true)
-                        }
-                    }
-                    item {
-                        SectionCard(title = "Top payees") {
-                            RankList(report.byPayee.take(8), showShare = true)
-                        }
-                    }
-                }
-                ReportTab.Categories -> {
-                    item {
-                        SectionCard(title = "Spending by category") {
-                            RankList(report.byCategory, showShare = true)
-                        }
-                    }
-                }
-                ReportTab.Groups -> {
-                    item {
-                        SectionCard(title = "Spending by category group") {
-                            RankList(report.byGroup, showShare = true)
-                        }
-                    }
-                }
-                ReportTab.Payees -> {
-                    item {
-                        SectionCard(title = "Spending by payee") {
-                            RankList(report.byPayee, showShare = true)
-                        }
-                    }
-                }
-                ReportTab.Accounts -> {
-                    item {
-                        SectionCard(title = "Activity by account (net)") {
-                            RankList(report.byAccount, showShare = false)
-                        }
-                    }
-                }
-                ReportTab.Trends -> {
-                    item {
-                        SectionCard(title = "Monthly income vs expense") {
-                            MiniTrendChart(
-                                points =
-                                    when (mode) {
-                                        PeriodMode.YEAR -> report.monthlyTrend
-                                        PeriodMode.ALL -> report.monthlyTrend.takeLast(24)
-                                        PeriodMode.MONTH ->
-                                            overviewTrend(
-                                                report,
-                                                mode,
-                                                analyticsTxns,
-                                                ledgerState,
-                                            )
-                                    },
-                                showInflow = true,
-                            )
-                        }
-                    }
-                    if (report.yearlyTrend.size > 1) {
-                        item {
-                            SectionCard(title = "Yearly totals") {
-                                TrendTable(report.yearlyTrend.asReversed())
-                            }
-                        }
-                    }
-                    if (mode == PeriodMode.YEAR && report.monthlyTrend.isNotEmpty()) {
-                        item {
-                            SectionCard(title = "Month-by-month · $selectedPeriod") {
-                                TrendTable(report.monthlyTrend.asReversed())
-                            }
-                        }
+                        IncomeSpendingChart(points = incomeTrend)
                     }
                 }
             }
@@ -348,350 +333,165 @@ fun ReportsScreen(container: AppContainer) {
     }
 }
 
-private data class LedgerSnap(
-    val transactions: List<TransactionEntity> = emptyList(),
-    val categories: List<CategoryEntity> = emptyList(),
-    val groups: List<CategoryGroupEntity> = emptyList(),
-    val payees: List<PayeeEntity> = emptyList(),
-    val accounts: List<AccountEntity> = emptyList(),
-)
-
-private fun TransactionEntity.toAnalytics(groupId: String?): AnalyticsTxn =
-    AnalyticsTxn(
-        date = date,
-        amountMilli = amountMilli,
-        categoryId = categoryId,
-        categoryGroupId = groupId,
-        payeeId = payeeId,
-        accountId = accountId,
-        transferAccountId = transferAccountId,
-    )
-
-private fun trendTitle(mode: PeriodMode, periodKey: String): String =
-    when (mode) {
-        PeriodMode.ALL -> "Income vs expense (yearly / monthly)"
-        PeriodMode.YEAR -> "Monthly spending · $periodKey"
-        PeriodMode.MONTH -> "Recent months (outflow)"
-    }
-
-private fun overviewTrend(
-    report: SpendingReport,
-    mode: PeriodMode,
-    analyticsTxns: List<AnalyticsTxn>,
-    snap: LedgerSnap,
-): List<TrendPoint> {
-    return when (mode) {
-        PeriodMode.YEAR -> report.monthlyTrend
-        PeriodMode.ALL ->
-            if (report.yearlyTrend.size > 1) report.yearlyTrend else report.monthlyTrend.takeLast(12)
-        PeriodMode.MONTH -> {
-            val months = Analytics.listMonths(analyticsTxns).asReversed()
-            val idx = months.indexOf(report.periodKey)
-            val end = if (idx >= 0) idx + 1 else months.size
-            val slice = months.subList(maxOf(0, end - 6), end)
-            slice.map { ym ->
-                Analytics
-                    .buildSpendingReport(
-                        transactions = analyticsTxns,
-                        mode = PeriodMode.MONTH,
-                        periodKey = ym,
-                        categoryNames = snap.categories.associate { it.id to it.name },
-                        groupNames = snap.groups.associate { it.id to it.name },
-                        payeeNames = snap.payees.associate { it.id to it.name },
-                        accountNames = snap.accounts.associate { it.id to it.name },
-                    ).let { r ->
-                        TrendPoint(
-                            key = ym,
-                            label = r.periodLabel,
-                            inflowMilli = r.inflowMilli,
-                            outflowMilli = r.outflowMilli,
-                            netMilli = r.netMilli,
-                            count = r.count,
-                        )
-                    }
-            }
-        }
-    }
-}
-
 @Composable
-private fun PeriodChips(
-    options: List<String>,
-    selected: String,
-    labelOf: (String) -> String,
-    onSelect: (String) -> Unit,
-) {
+internal fun StackedBar(segments: List<CategoryColors.StackSegment>) {
     Row(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        Modifier
+            .fillMaxWidth()
+            .height(14.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        options.take(36).forEach { key ->
-            FilterChip(
-                selected = selected == key,
-                onClick = { onSelect(key) },
-                label = {
-                    Text(
-                        labelOf(key),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                },
+        segments.forEach { seg ->
+            val w = (seg.share.toFloat() * 100f).coerceAtLeast(0.5f)
+            Box(
+                Modifier
+                    .weight(w)
+                    .fillMaxHeight()
+                    .background(parseHexColor(seg.colorHex)),
             )
         }
     }
 }
 
 @Composable
-private fun StatGrid(report: SpendingReport) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            StatCard("Inflow", Money.format(report.inflowMilli), Modifier.weight(1f), positive = true)
-            StatCard("Outflow", Money.format(report.outflowMilli), Modifier.weight(1f), positive = false)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            StatCard("Net", Money.format(report.netMilli), Modifier.weight(1f), positive = report.netMilli >= 0)
-            val fourthLabel =
-                if (report.mode == PeriodMode.MONTH) "Transactions" else "Avg monthly out"
-            val fourthValue =
-                if (report.mode == PeriodMode.MONTH) {
-                    report.count.toString()
-                } else {
-                    Money.format(report.avgMonthlyOutflowMilli)
-                }
-            StatCard(fourthLabel, fourthValue, Modifier.weight(1f), positive = null)
-        }
-        if (report.mode != PeriodMode.MONTH) {
-            Text(
-                "${report.count} transactions · ${report.monthsCovered} months",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-@Composable
-private fun StatCard(
-    label: String,
-    value: String,
-    modifier: Modifier = Modifier,
-    positive: Boolean?,
+internal fun CategoryRow(
+    name: String,
+    amountMilli: Long,
+    colorHex: String,
+    share: Double? = null,
 ) {
-    Card(
-        modifier = modifier,
-        colors =
-            CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-            ),
-    ) {
-        Column(Modifier.padding(12.dp)) {
-            Text(
-                label,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                Modifier
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(parseHexColor(colorHex)),
             )
             Text(
-                value,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color =
-                    when (positive) {
-                        true -> Color(0xFF1B7A57)
-                        false -> Color(0xFFB3261E)
-                        null -> MaterialTheme.colorScheme.onSurface
-                    },
+                name,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                Money.format(amountMilli),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
             )
         }
-    }
-}
-
-@Composable
-private fun SectionCard(
-    title: String,
-    content: @Composable () -> Unit,
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors =
-            CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface,
-            ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-    ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            content()
-        }
-    }
-}
-
-@Composable
-private fun RankList(
-    rows: List<RankRow>,
-    showShare: Boolean,
-) {
-    if (rows.isEmpty()) {
-        Text(
-            "No spending in this period.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        return
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        rows.forEach { row ->
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+        if (share != null && share > 0) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(start = 20.dp),
+            ) {
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
                 ) {
-                    Text(
-                        row.name,
-                        modifier = Modifier.weight(1f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        Money.format(row.amountMilli),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color =
-                            if (row.amountMilli < 0) {
-                                Color(0xFFB3261E)
-                            } else if (row.amountMilli > 0) {
-                                Color(0xFF1B7A57)
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
-                            },
+                    Box(
+                        Modifier
+                            .fillMaxWidth(share.toFloat().coerceIn(0f, 1f))
+                            .fillMaxHeight()
+                            .background(parseHexColor(colorHex)),
                     )
                 }
-                if (showShare && row.share > 0) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        LinearProgressIndicator(
-                            progress = { row.share.toFloat().coerceIn(0f, 1f) },
-                            modifier =
-                                Modifier
-                                    .weight(1f)
-                                    .height(6.dp)
-                                    .clip(RoundedCornerShape(3.dp)),
-                            color = Color(0xFFB3261E),
-                            trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                        )
-                        Text(
-                            "${"%.1f".format(row.share * 100)}%",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
+                Text(
+                    "${"%.0f".format(share * 100)}%",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
 }
 
 @Composable
-private fun MiniTrendChart(
-    points: List<TrendPoint>,
-    showInflow: Boolean,
-) {
-    if (points.isEmpty()) {
-        Text(
-            "No activity.",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+private fun LegendDot(hex: String, label: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box(
+            Modifier
+                .size(10.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(parseHexColor(hex)),
         )
+        Text(label, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+@Composable
+internal fun IncomeSpendingChart(points: List<TrendPoint>) {
+    if (points.isEmpty()) {
+        Text("No activity.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         return
     }
     val max =
         points
-            .maxOf {
-                if (showInflow) {
-                    maxOf(it.inflowMilli, kotlin.math.abs(it.outflowMilli))
-                } else {
-                    kotlin.math.abs(it.outflowMilli)
-                }
-            }.coerceAtLeast(1L)
-    val chartHeight = 110.dp
+            .maxOf { maxOf(it.inflowMilli, kotlin.math.abs(it.outflowMilli)) }
+            .coerceAtLeast(1L)
+    val chartHeight = 120.dp
 
     Row(
         modifier =
             Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.Bottom,
     ) {
         points.forEach { p ->
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.width(40.dp),
+                modifier = Modifier.width(44.dp),
             ) {
                 Row(
                     modifier =
                         Modifier
                             .height(chartHeight)
                             .fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
                     verticalAlignment = Alignment.Bottom,
                 ) {
-                    if (showInflow) {
-                        val hIn =
-                            (chartHeight.value * (p.inflowMilli.toFloat() / max))
-                                .coerceIn(2f, chartHeight.value)
-                        Box(
-                            Modifier
-                                .weight(1f)
-                                .height(hIn.dp)
-                                .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
-                                .background(Color(0xFF1B7A57)),
-                        )
-                    }
+                    val hIn =
+                        (chartHeight.value * (p.inflowMilli.toFloat() / max))
+                            .coerceIn(2f, chartHeight.value)
                     val hOut =
                         (chartHeight.value * (kotlin.math.abs(p.outflowMilli).toFloat() / max))
                             .coerceIn(2f, chartHeight.value)
                     Box(
                         Modifier
                             .weight(1f)
+                            .height(hIn.dp)
+                            .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
+                            .background(parseHexColor(CategoryColors.INCOME)),
+                    )
+                    Box(
+                        Modifier
+                            .weight(1f)
                             .height(hOut.dp)
                             .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
-                            .background(Color(0xFFB3261E)),
+                            .background(parseHexColor(CategoryColors.SPENDING)),
                     )
                 }
                 Text(
-                    if (p.key.length == 7) p.key.takeLast(2) else p.key.takeLast(2),
+                    if (p.key.length >= 7) p.key.takeLast(2) else p.key,
                     style = MaterialTheme.typography.labelSmall,
                     maxLines = 1,
                 )
-            }
-        }
-    }
-}
-
-@Composable
-private fun TrendTable(points: List<TrendPoint>) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(Modifier.fillMaxWidth()) {
-            Text("Period", Modifier.weight(1.2f), style = MaterialTheme.typography.labelSmall)
-            Text("In", Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
-            Text("Out", Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
-            Text("Net", Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
-        }
-        points.forEach { p ->
-            Row(Modifier.fillMaxWidth()) {
-                Text(
-                    p.label,
-                    Modifier.weight(1.2f),
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(Money.format(p.inflowMilli), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                Text(Money.format(p.outflowMilli), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                Text(Money.format(p.netMilli), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
             }
         }
     }

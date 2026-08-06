@@ -56,6 +56,8 @@ data class CloudCategory(
     val name: String,
     val categoryGroupId: String? = null,
     val hidden: Boolean = false,
+    /** Hex color from DDB (Reflect / charts). */
+    val color: String? = null,
 )
 
 @Serializable
