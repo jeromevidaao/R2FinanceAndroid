@@ -1,14 +1,21 @@
 package com.cleaningbutton.r2finance.ui.accounts
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Refresh
@@ -34,15 +41,28 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cleaningbutton.r2finance.data.AppContainer
 import com.cleaningbutton.r2finance.data.cloud.SyncCoordinator
 import com.cleaningbutton.r2finance.data.repository.AccountWithBalance
+import com.cleaningbutton.r2finance.domain.AccountGroup
 import com.cleaningbutton.r2finance.domain.AccountType
 import com.cleaningbutton.r2finance.domain.Money
+import com.cleaningbutton.r2finance.domain.accountGroup
+import com.cleaningbutton.r2finance.domain.accountTypeLabel
+import com.cleaningbutton.r2finance.domain.inferInstitution
 import kotlinx.coroutines.launch
+
+/** Positive balances — YNAB-style green for quick scan. */
+private val BalancePositive = Color(0xFF3DCC91)
+/** Mild red for debt / negative. */
+private val BalanceNegative = Color(0xFFFF8A96)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -73,7 +93,21 @@ fun AccountsScreen(
         container.ledger.observeAccountsWithBalances(planId)
     }.collectAsStateWithLifecycle(initialValue = emptyList())
 
-    val openAccounts = accounts.filter { !it.account.closed }
+    val openAccounts = remember(accounts) {
+        accounts.filter { !it.account.closed }
+    }
+
+    val grouped = remember(openAccounts) {
+        AccountGroup.entries.map { group ->
+            val rows = openAccounts
+                .filter {
+                    accountGroup(it.account.type, it.account.onBudget) == group
+                }
+                .sortedBy { it.account.name.lowercase() }
+            val total = rows.sumOf { it.balanceMilli }
+            GroupSection(group = group, rows = rows, totalMilli = total)
+        }.filter { it.rows.isNotEmpty() }
+    }
 
     fun refreshFromCloud() {
         if (syncing) return
@@ -85,13 +119,16 @@ fun AccountsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("R2Finance") },
+                title = { Text("Accounts") },
                 actions = {
                     IconButton(
                         enabled = !syncing,
                         onClick = { refreshFromCloud() },
                     ) {
                         Icon(Icons.Default.Refresh, contentDescription = "Sync from cloud")
+                    }
+                    IconButton(onClick = { showAdd = true }) {
+                        Icon(Icons.Default.Add, contentDescription = "Add account")
                     }
                 },
             )
@@ -165,8 +202,22 @@ fun AccountsScreen(
                         syncMessage = syncMessage,
                     )
                     LazyColumn(contentPadding = PaddingValues(vertical = 8.dp)) {
-                        items(openAccounts, key = { it.account.id }) { row ->
-                            AccountRow(row = row, onClick = { onOpenAccount(row.account.id) })
+                        grouped.forEach { section ->
+                            item(key = "hdr-${section.group.name}") {
+                                GroupHeader(
+                                    title = section.group.title,
+                                    totalMilli = section.totalMilli,
+                                )
+                            }
+                            items(section.rows, key = { it.account.id }) { row ->
+                                AccountRow(
+                                    row = row,
+                                    onClick = { onOpenAccount(row.account.id) },
+                                )
+                            }
+                            item(key = "sp-${section.group.name}") {
+                                Spacer(Modifier.height(12.dp))
+                            }
                         }
                     }
                 }
@@ -212,6 +263,40 @@ fun AccountsScreen(
     }
 }
 
+private data class GroupSection(
+    val group: AccountGroup,
+    val rows: List<AccountWithBalance>,
+    val totalMilli: Long,
+)
+
+@Composable
+private fun GroupHeader(
+    title: String,
+    totalMilli: Long,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = title.uppercase(),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            letterSpacing = 0.8.sp,
+        )
+        Text(
+            text = Money.format(totalMilli),
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = balanceColor(totalMilli),
+        )
+    }
+}
+
 @Composable
 private fun OfflineStatusBanner(
     online: Boolean,
@@ -251,25 +336,34 @@ private fun AccountRow(
     row: AccountWithBalance,
     onClick: () -> Unit,
 ) {
+    val brand = remember(row.account.name, row.account.type, row.account.onBudget) {
+        inferInstitution(row.account.name, row.account.type, row.account.onBudget)
+    }
     ListItem(
+        leadingContent = {
+            InstitutionIcon(
+                mark = brand.mark,
+                bg = Color(brand.bg),
+                fg = Color(brand.fg),
+            )
+        },
         headlineContent = {
-            Text(row.account.name, fontWeight = FontWeight.SemiBold)
+            Text(
+                text = row.account.name,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         },
         supportingContent = {
-            Text(
-                "${row.account.type.name} · " +
-                    if (row.account.onBudget) "on budget" else "tracking",
-            )
+            Text(accountTypeLabel(row.account.type))
         },
         trailingContent = {
             Text(
-                Money.format(row.balanceMilli),
+                text = Money.format(row.balanceMilli),
                 style = MaterialTheme.typography.titleMedium,
-                color = if (row.balanceMilli < 0) {
-                    MaterialTheme.colorScheme.error
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                },
+                fontWeight = FontWeight.SemiBold,
+                color = balanceColor(row.balanceMilli),
             )
         },
         modifier = Modifier
@@ -277,4 +371,34 @@ private fun AccountRow(
             .clickable(onClick = onClick)
             .padding(horizontal = 4.dp),
     )
+}
+
+@Composable
+private fun InstitutionIcon(
+    mark: String,
+    bg: Color,
+    fg: Color,
+) {
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(bg),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = mark,
+            color = fg,
+            fontWeight = FontWeight.Bold,
+            fontSize = if (mark.length >= 3) 10.sp else 14.sp,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun balanceColor(milli: Long): Color = when {
+    milli > 0L -> BalancePositive
+    milli < 0L -> BalanceNegative
+    else -> MaterialTheme.colorScheme.onSurfaceVariant
 }
