@@ -40,6 +40,8 @@ data class TransactionRow(
     val categoryName: String?,
     val accountName: String? = null,
     val categoryGroupName: String? = null,
+    /** Hex color from category DDB row (Reflect / rails); null if unset. */
+    val categoryColor: String? = null,
 )
 
 class LedgerRepository(
@@ -129,6 +131,7 @@ class LedgerRepository(
                     categoryName = cat?.name,
                     accountName = acctMap[t.accountId]?.name,
                     categoryGroupName = cat?.categoryGroupId?.let { groupMap[it]?.name },
+                    categoryColor = cat?.color,
                 )
             }
         }

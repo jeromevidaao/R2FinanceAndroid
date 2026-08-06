@@ -4,30 +4,43 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.cleaningbutton.r2finance.R
 import com.cleaningbutton.r2finance.data.repository.TransactionRow
+import com.cleaningbutton.r2finance.domain.CategoryColors
 
 enum class CategoryChipKind {
     Needed,
     Category,
     Inflow,
     Transfer,
+    Airbnb,
+}
+
+enum class BrandIcon {
+    None,
+    Airbnb,
 }
 
 data class CategoryChipModel(
     val label: String,
     val kind: CategoryChipKind,
     val icon: String,
+    val brandIcon: BrandIcon = BrandIcon.None,
+    val railColorHex: String,
 )
 
 private data class IconRule(val pattern: Regex, val icon: String)
@@ -43,7 +56,7 @@ private val ICON_RULES = listOf(
     IconRule(Regex("medical|health|doctor|dental|pharmacy|hospital", RegexOption.IGNORE_CASE), "🏥"),
     IconRule(Regex("entertain|movie|music|game|hobby|netflix|spotify", RegexOption.IGNORE_CASE), "🎬"),
     IconRule(Regex("shop|amazon|clothing|clothes|retail", RegexOption.IGNORE_CASE), "🛍️"),
-    IconRule(Regex("travel|hotel|flight|airline|vacation|airbnb", RegexOption.IGNORE_CASE), "✈️"),
+    IconRule(Regex("travel|hotel|flight|airline|vacation", RegexOption.IGNORE_CASE), "✈️"),
     IconRule(Regex("educat|tuition|school|student|books", RegexOption.IGNORE_CASE), "📚"),
     IconRule(Regex("insur", RegexOption.IGNORE_CASE), "🛡️"),
     IconRule(Regex("credit card payment|cc payment", RegexOption.IGNORE_CASE), "💳"),
@@ -57,7 +70,17 @@ private val ICON_RULES = listOf(
     IconRule(Regex("savings|invest", RegexOption.IGNORE_CASE), "📈"),
 )
 
+const val AIRBNB_COLOR = "#FF5A5F"
+const val NEEDED_COLOR = "#F59E0B"
+const val TRANSFER_COLOR = "#A78BFA"
+
+fun isAirbnbName(name: String?, groupName: String? = null): Boolean {
+    val hay = listOfNotNull(name, groupName).joinToString(" ").lowercase()
+    return hay.contains("airbnb")
+}
+
 fun iconForCategoryName(name: String?, groupName: String? = null): String {
+    if (isAirbnbName(name, groupName)) return ""
     val hay = listOfNotNull(name, groupName).joinToString(" ").trim()
     if (hay.isEmpty()) return "⚠️"
     for (rule in ICON_RULES) {
@@ -78,40 +101,182 @@ fun isInflowCategoryName(categoryName: String?, groupName: String? = null): Bool
     return false
 }
 
+fun railColorHex(
+    categoryId: String?,
+    categoryName: String?,
+    groupName: String?,
+    storedColor: String?,
+    isTransfer: Boolean = false,
+    amountMilli: Long = 0L,
+): String {
+    if (isTransfer) return TRANSFER_COLOR
+    if (categoryId.isNullOrBlank() || categoryName.isNullOrBlank() ||
+        categoryName.equals("Uncategorized", ignoreCase = true)
+    ) {
+        return NEEDED_COLOR
+    }
+    if (isAirbnbName(categoryName, groupName)) return AIRBNB_COLOR
+    if (CategoryColors.isHex(storedColor)) return storedColor!!
+    if (isInflowCategoryName(categoryName, groupName)) return CategoryColors.INCOME
+    if (amountMilli > 0 &&
+        !Regex("expense|spend|bills|monthly|yearly|debt", RegexOption.IGNORE_CASE)
+            .containsMatchIn(groupName.orEmpty())
+    ) {
+        return CategoryColors.INCOME
+    }
+    return CategoryColors.colorHex(categoryId, emptyMap(), categoryName)
+}
+
 fun categoryChipForRow(
     row: TransactionRow,
     groupName: String? = null,
 ): CategoryChipModel {
     val txn = row.txn
     if (txn.transferAccountId != null) {
-        return CategoryChipModel("Transfer", CategoryChipKind.Transfer, "↔️")
+        return CategoryChipModel(
+            label = "Transfer",
+            kind = CategoryChipKind.Transfer,
+            icon = "↔️",
+            railColorHex = TRANSFER_COLOR,
+        )
     }
     val name = row.categoryName
     if (name.isNullOrBlank() || name.equals("Uncategorized", ignoreCase = true)) {
-        return CategoryChipModel("Category Needed", CategoryChipKind.Needed, "⚠️")
+        return CategoryChipModel(
+            label = "Category Needed",
+            kind = CategoryChipKind.Needed,
+            icon = "⚠️",
+            railColorHex = NEEDED_COLOR,
+        )
+    }
+    val gName = groupName ?: row.categoryGroupName
+    if (isAirbnbName(name, gName)) {
+        return CategoryChipModel(
+            label = name,
+            kind = CategoryChipKind.Airbnb,
+            icon = "",
+            brandIcon = BrandIcon.Airbnb,
+            railColorHex = AIRBNB_COLOR,
+        )
     }
     if (name.contains("Credit Card Payment", ignoreCase = true)) {
-        return CategoryChipModel("Credit Card Payment", CategoryChipKind.Category, "💳")
+        return CategoryChipModel(
+            label = "Credit Card Payment",
+            kind = CategoryChipKind.Category,
+            icon = "💳",
+            railColorHex = railColorHex(
+                txn.categoryId,
+                name,
+                gName,
+                row.categoryColor,
+                amountMilli = txn.amountMilli,
+            ),
+        )
     }
     val treatAsInflow =
-        isInflowCategoryName(name, groupName) ||
+        isInflowCategoryName(name, gName) ||
             (txn.amountMilli > 0 &&
                 !Regex("expense|spend|bills|monthly|yearly|debt", RegexOption.IGNORE_CASE)
-                    .containsMatchIn(groupName.orEmpty()))
+                    .containsMatchIn(gName.orEmpty()))
+    val rail = railColorHex(
+        txn.categoryId,
+        name,
+        gName,
+        row.categoryColor,
+        amountMilli = txn.amountMilli,
+    )
     return CategoryChipModel(
         label = name,
         kind = if (treatAsInflow) CategoryChipKind.Inflow else CategoryChipKind.Category,
-        icon = iconForCategoryName(name, groupName),
+        icon = iconForCategoryName(name, gName),
+        railColorHex = if (treatAsInflow) CategoryColors.INCOME else rail,
     )
 }
 
-fun categoryChipForCategory(name: String, groupName: String? = null): CategoryChipModel {
+fun categoryChipForCategory(
+    name: String,
+    groupName: String? = null,
+    categoryId: String? = null,
+    storedColor: String? = null,
+): CategoryChipModel {
+    if (isAirbnbName(name, groupName)) {
+        return CategoryChipModel(
+            label = name,
+            kind = CategoryChipKind.Airbnb,
+            icon = "",
+            brandIcon = BrandIcon.Airbnb,
+            railColorHex = AIRBNB_COLOR,
+        )
+    }
     val inflow = isInflowCategoryName(name, groupName)
     return CategoryChipModel(
         label = name,
         kind = if (inflow) CategoryChipKind.Inflow else CategoryChipKind.Category,
         icon = iconForCategoryName(name, groupName),
+        railColorHex = railColorHex(categoryId ?: name, name, groupName, storedColor),
     )
+}
+
+/** Stable group key for Spending list (same category together). */
+fun inboxGroupKey(row: TransactionRow): String {
+    val txn = row.txn
+    if (txn.transferAccountId != null) return "__transfer:${txn.transferAccountId}"
+    if (txn.categoryId.isNullOrBlank() ||
+        row.categoryName.isNullOrBlank() ||
+        row.categoryName.equals("Uncategorized", ignoreCase = true)
+    ) {
+        return "__needed"
+    }
+    return txn.categoryId!!
+}
+
+data class InboxCategoryGroup(
+    val key: String,
+    val label: String,
+    val chip: CategoryChipModel,
+    val railColorHex: String,
+    val rows: List<TransactionRow>,
+)
+
+/**
+ * Group inbox rows by category for bulk approve.
+ * Order: Category Needed → named categories (A–Z) → transfers.
+ * Within each group: newest date first.
+ */
+fun groupInboxByCategory(rows: List<TransactionRow>): List<InboxCategoryGroup> {
+    val map = rows.groupBy { inboxGroupKey(it) }
+    val groups = map.map { (key, list) ->
+        val sorted = list.sortedByDescending { it.txn.date }
+        val sample = sorted.first()
+        val chip = categoryChipForRow(sample, sample.categoryGroupName)
+        InboxCategoryGroup(
+            key = key,
+            label = chip.label,
+            chip = chip,
+            railColorHex = chip.railColorHex,
+            rows = sorted,
+        )
+    }
+    return groups.sortedWith(
+        compareBy<InboxCategoryGroup> {
+            when {
+                it.key == "__needed" -> 0
+                it.key.startsWith("__transfer") -> 2
+                else -> 1
+            }
+        }.thenBy { it.label.lowercase() },
+    )
+}
+
+fun parseHexColor(hex: String, alpha: Float = 1f): Color {
+    val clean = hex.removePrefix("#")
+    val c = when (clean.length) {
+        6 -> clean.toLong(16) or 0xFF000000L
+        8 -> clean.toLong(16)
+        else -> 0xFF6366F1L
+    }
+    val base = Color(c.toInt())
+    return if (alpha >= 0.999f) base else base.copy(alpha = alpha)
 }
 
 private val NeededBg = Color(0xFFFDE68A)
@@ -130,6 +295,11 @@ private val TransferBg = Color(0x2EA78BFA)
 private val TransferFg = Color(0xFFDDD6FE)
 private val TransferBorder = Color(0x59A78BFA)
 
+private val AirbnbBg = Color(0x2EFF5A5F)
+private val AirbnbFg = Color(0xFFFFB4B8)
+private val AirbnbBorder = Color(0x80FF5A5F)
+private val AirbnbAccent = Color(0xFFFF5A5F)
+
 @Composable
 fun CategoryChip(
     model: CategoryChipModel,
@@ -140,6 +310,7 @@ fun CategoryChip(
         CategoryChipKind.Category -> Triple(CategoryBg, CategoryFg, CategoryBorder)
         CategoryChipKind.Inflow -> Triple(InflowBg, InflowFg, InflowBorder)
         CategoryChipKind.Transfer -> Triple(TransferBg, TransferFg, TransferBorder)
+        CategoryChipKind.Airbnb -> Triple(AirbnbBg, AirbnbFg, AirbnbBorder)
     }
     val shape = RoundedCornerShape(999.dp)
     Row(
@@ -149,11 +320,27 @@ fun CategoryChip(
             .padding(horizontal = 8.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = model.icon,
-            fontSize = 12.sp,
-            modifier = Modifier.padding(end = 4.dp),
-        )
+        when (model.brandIcon) {
+            BrandIcon.Airbnb -> {
+                Icon(
+                    painter = painterResource(R.drawable.ic_airbnb),
+                    contentDescription = null,
+                    tint = AirbnbAccent,
+                    modifier = Modifier
+                        .padding(end = 4.dp)
+                        .size(14.dp),
+                )
+            }
+            BrandIcon.None -> {
+                if (model.icon.isNotEmpty()) {
+                    Text(
+                        text = model.icon,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(end = 4.dp),
+                    )
+                }
+            }
+        }
         Text(
             text = model.label,
             color = fg,
