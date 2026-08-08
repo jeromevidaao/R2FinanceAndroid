@@ -102,7 +102,7 @@ fun InboxTxnDetailDialog(
                         append(" · ")
                         append(RelativeDate.formatFriendly(txn.date))
                         append(" · ")
-                        append(if (txn.approved) txn.cleared.name else "needs approval")
+                        append(if (txn.approved) "Approved" else "Needs approval")
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

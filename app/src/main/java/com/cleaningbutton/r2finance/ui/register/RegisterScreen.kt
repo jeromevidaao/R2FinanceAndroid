@@ -234,7 +234,8 @@ private fun TransactionRowItem(
                     Text(txn.date)
                     Text(
                         buildString {
-                            append(if (txn.approved) txn.cleared.name else "unapproved")
+                            // Status = YNAB approved (not bank cleared/uncleared)
+                            append(if (txn.approved) "Approved" else "Needs approval")
                             when {
                                 row.categoryName != null -> append(" · ${row.categoryName}")
                                 uncategorized -> append(" · uncategorized · tap to set")

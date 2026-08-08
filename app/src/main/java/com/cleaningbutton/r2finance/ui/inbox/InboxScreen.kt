@@ -51,7 +51,6 @@ import com.cleaningbutton.r2finance.R
 import com.cleaningbutton.r2finance.data.AppContainer
 import com.cleaningbutton.r2finance.data.cloud.SyncCoordinator
 import com.cleaningbutton.r2finance.data.repository.TransactionRow
-import com.cleaningbutton.r2finance.domain.ClearedStatus
 import com.cleaningbutton.r2finance.domain.Money
 import com.cleaningbutton.r2finance.domain.RelativeDate
 import com.cleaningbutton.r2finance.ui.categorize.CategorizeDialog
@@ -466,7 +465,7 @@ private fun InboxTxnRow(
                         append(" · ")
                         append(row.accountName ?: "Account")
                         append(" · ")
-                        append(clearedLabel(txn.cleared, txn.approved))
+                        append(approvalStatusLabel(txn.approved))
                         val loc = txn.locationDisplay
                         if (!loc.isNullOrBlank()) {
                             append(" · ")
@@ -502,11 +501,6 @@ private fun InboxTxnRow(
     }
 }
 
-private fun clearedLabel(cleared: ClearedStatus, approved: Boolean): String {
-    if (!approved) return "uncleared"
-    return when (cleared) {
-        ClearedStatus.reconciled -> "reconciled"
-        ClearedStatus.cleared -> "cleared"
-        ClearedStatus.uncleared -> "uncleared"
-    }
-}
+/** Status UI = YNAB `approved` (not bank cleared / uncleared / reconciled). */
+private fun approvalStatusLabel(approved: Boolean): String =
+    if (approved) "Approved" else "Needs approval"
