@@ -1,5 +1,7 @@
 package com.cleaningbutton.r2finance.ui.navigation
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalance
@@ -13,7 +15,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
@@ -26,6 +29,7 @@ import com.cleaningbutton.r2finance.R
 import com.cleaningbutton.r2finance.data.AppContainer
 import com.cleaningbutton.r2finance.ui.accounts.AccountsScreen
 import com.cleaningbutton.r2finance.ui.categories.CategoriesScreen
+import com.cleaningbutton.r2finance.ui.categorize.UndoCategorizeOverlay
 import com.cleaningbutton.r2finance.ui.home.HomeScreen
 import com.cleaningbutton.r2finance.ui.inbox.InboxScreen
 import com.cleaningbutton.r2finance.ui.more.MoreScreen
@@ -101,60 +105,70 @@ fun AppNavHost(container: AppContainer) {
             }
         },
     ) { padding ->
-        NavHost(
-            navController = navController,
-            startDestination = Routes.Home,
-            modifier = Modifier.padding(padding),
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
         ) {
-            composable(Routes.Home) {
-                HomeScreen(
-                    container = container,
-                    onOpenSpending = { go(Routes.Spending) },
-                    onOpenAccounts = { go(Routes.Account) },
-                    onOpenReports = { go(Routes.Report) },
-                    onOpenCategories = { go(Routes.Categories) },
-                    onOpenMore = { go(Routes.More) },
-                )
+            NavHost(
+                navController = navController,
+                startDestination = Routes.Home,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                composable(Routes.Home) {
+                    HomeScreen(
+                        container = container,
+                        onOpenSpending = { go(Routes.Spending) },
+                        onOpenAccounts = { go(Routes.Account) },
+                        onOpenReports = { go(Routes.Report) },
+                        onOpenCategories = { go(Routes.Categories) },
+                        onOpenMore = { go(Routes.More) },
+                    )
+                }
+                composable(Routes.Spending) {
+                    InboxScreen(container = container)
+                }
+                composable(Routes.Account) {
+                    AccountsScreen(
+                        container = container,
+                        onOpenAccount = { id -> navController.navigate(Routes.register(id)) },
+                    )
+                }
+                composable(Routes.Report) {
+                    ReportsScreen(
+                        container = container,
+                        onOpenSpendingBreakdown = {
+                            navController.navigate(Routes.ReportSpending)
+                        },
+                    )
+                }
+                composable(Routes.ReportSpending) {
+                    SpendingBreakdownScreen(
+                        container = container,
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+                composable(Routes.Categories) {
+                    CategoriesScreen(container = container)
+                }
+                composable(Routes.More) {
+                    MoreScreen(container = container)
+                }
+                composable(
+                    Routes.Register,
+                    arguments = listOf(navArgument("accountId") { type = NavType.StringType }),
+                ) { entry ->
+                    val accountId = entry.arguments?.getString("accountId").orEmpty()
+                    RegisterScreen(
+                        container = container,
+                        accountId = accountId,
+                        onBack = { navController.popBackStack() },
+                    )
+                }
             }
-            composable(Routes.Spending) {
-                InboxScreen(container = container)
-            }
-            composable(Routes.Account) {
-                AccountsScreen(
-                    container = container,
-                    onOpenAccount = { id -> navController.navigate(Routes.register(id)) },
-                )
-            }
-            composable(Routes.Report) {
-                ReportsScreen(
-                    container = container,
-                    onOpenSpendingBreakdown = {
-                        navController.navigate(Routes.ReportSpending)
-                    },
-                )
-            }
-            composable(Routes.ReportSpending) {
-                SpendingBreakdownScreen(
-                    container = container,
-                    onBack = { navController.popBackStack() },
-                )
-            }
-            composable(Routes.Categories) {
-                CategoriesScreen(container = container)
-            }
-            composable(Routes.More) {
-                MoreScreen(container = container)
-            }
-            composable(
-                Routes.Register,
-                arguments = listOf(navArgument("accountId") { type = NavType.StringType }),
-            ) { entry ->
-                val accountId = entry.arguments?.getString("accountId").orEmpty()
-                RegisterScreen(
-                    container = container,
-                    accountId = accountId,
-                    onBack = { navController.popBackStack() },
-                )
+            // Delayed categorize undo (above content; scaffold padding already applied)
+            Box(modifier = Modifier.align(Alignment.BottomCenter)) {
+                UndoCategorizeOverlay(container = container)
             }
         }
     }

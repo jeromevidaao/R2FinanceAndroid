@@ -20,7 +20,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
+import androidx.compose.ui.Modifier.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.cleaningbutton.r2finance.data.AppContainer
@@ -31,18 +31,15 @@ import com.cleaningbutton.r2finance.domain.RelativeDate
 import com.cleaningbutton.r2finance.ui.category.CategoryChip
 import com.cleaningbutton.r2finance.ui.category.categoryChipForCategory
 import com.cleaningbutton.r2finance.ui.category.categoryChipForRow
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * Category picker for one or many transactions (bulk).
  *
- * Super-fast path:
+ * Super-fast path + 10s undo window:
  * 1. Room write (local) → inbox Flow drops the rows
  * 2. Close dialog → back on Categorization list (no navigation)
- * 3. Silent push PENDING_PUSH (no HTTP pull / no full list refresh)
- * Offline: ConnectivityMonitor flushes when the network returns.
+ * 3. Cloud push held for ~10s ([PendingCategorizeQueue]); Undo bar can cancel
+ * Offline: after the delay, ConnectivityMonitor flushes when the network returns.
  */
 @Composable
 fun CategorizeDialog(
@@ -58,19 +55,6 @@ fun CategorizeDialog(
 
     val single = targets.singleOrNull()
     val bulk = targets.size > 1
-    val locationLine = remember(targets) {
-        if (!bulk) {
-            single?.txn?.locationDisplay?.takeIf { it.isNotBlank() }
-        } else {
-            val locs = targets.mapNotNull { it.txn.locationDisplay?.takeIf { s -> s.isNotBlank() } }.distinct()
-            when {
-                locs.isEmpty() -> null
-                locs.size <= 3 -> locs.joinToString(" · ")
-                else -> locs.take(2).joinToString(" · ") + " +${locs.size - 2} more"
-            }
-        }
-    }
-    val pfcHint = if (!bulk) single?.txn?.plaidPfc?.takeIf { it.isNotBlank() } else null
 
     LaunchedEffect(planId) {
         categories = container.ledger.listAssignableCategories(planId)
@@ -92,27 +76,22 @@ fun CategorizeDialog(
     }
 
     fun pickCategory(cat: CategoryEntity) {
-        val ids = targets.map { it.txn.id }
         val offline = !container.connectivityMonitor.online.value
         val doneMsg =
             when {
-                bulk && offline -> "Categorized ${ids.size} · offline"
-                bulk -> "Categorized ${ids.size}"
-                offline -> "Categorized · offline"
-                else -> null
+                bulk && offline -> "Categorized ${targets.size} · offline · 10s to undo"
+                bulk -> "Categorized ${targets.size} · 10s to undo"
+                offline -> "Categorized · offline · 10s to undo"
+                else -> "Categorized · 10s to undo"
             }
-        // Room first (ms) so the list drops rows, then dismiss + silent push.
-        // Never call syncWhenOnline / pull — that was reloading the whole list.
-        container.applicationScope.launch {
-            runCatching { container.ledger.setCategoryMany(ids, cat.id) }
-            withContext(Dispatchers.Main.immediate) {
-                onDone(doneMsg)
-                onDismiss()
-            }
-            if (container.connectivityMonitor.online.value) {
-                runCatching { container.syncCoordinator.pushPendingSilent(planId) }
-            }
-        }
+        container.pendingCategorize.enqueue(
+            planId = planId,
+            targets = targets,
+            categoryId = cat.id,
+            categoryName = cat.name,
+        )
+        onDone(doneMsg)
+        onDismiss()
     }
 
     AlertDialog(
@@ -144,20 +123,6 @@ fun CategorizeDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (locationLine != null) {
-                    Text(
-                        buildString {
-                            append("📍 ")
-                            append(locationLine)
-                            if (pfcHint != null) {
-                                append(" · ")
-                                append(pfcHint)
-                            }
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
                 if (!bulk && single != null) {
                     CategoryChip(
                         model = categoryChipForRow(single, single.categoryGroupName),

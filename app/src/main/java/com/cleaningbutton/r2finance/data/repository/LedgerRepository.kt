@@ -306,6 +306,31 @@ class LedgerRepository(
         }
     }
 
+    data class CategorySnapshot(
+        val id: String,
+        val categoryId: String?,
+        val approved: Boolean,
+        val syncStatus: SyncStatus,
+    )
+
+    /**
+     * Undo a delayed categorize: restore categoryId + approved + prior syncStatus
+     * so rows reappear in the inbox and are not PENDING_PUSH unless they were before.
+     */
+    suspend fun restoreCategorySnapshots(snapshots: Collection<CategorySnapshot>) {
+        for (snap in snapshots) {
+            val txn = txns.getById(snap.id) ?: continue
+            txns.update(
+                txn.copy(
+                    categoryId = snap.categoryId,
+                    approved = snap.approved,
+                    syncStatus = snap.syncStatus,
+                    updatedAt = System.currentTimeMillis(),
+                ),
+            )
+        }
+    }
+
     suspend fun approve(transactionId: String) {
         val txn = txns.getById(transactionId) ?: return
         txns.update(

@@ -48,6 +48,18 @@ class AppContainer(context: Context) {
     }
 
     /**
+     * Categorize: local Room immediately, cloud push after ~10s with undo.
+     * Shared across screens via [applicationScope].
+     */
+    val pendingCategorize: PendingCategorizeQueue =
+        PendingCategorizeQueue(
+            scope = applicationScope,
+            ledger = ledger,
+            connectivityMonitor = connectivityMonitor,
+            syncCoordinator = syncCoordinator,
+        )
+
+    /**
      * Warm aggregates + hydrate flag as soon as the process starts so Home/Reflect
      * open with precomputed numbers instead of scanning the ledger on the UI thread.
      */

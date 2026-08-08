@@ -403,7 +403,9 @@ class CloudSync(
         planId: String = "default",
         onProgress: (String) -> Unit = {},
     ): DevicePushResponse = withContext(Dispatchers.IO) {
-        val pendingTxns = db.transactionDao().listPendingPush(planId)
+        val pendingTxns = com.cleaningbutton.r2finance.data.PushHold.filterPushable(
+            db.transactionDao().listPendingPush(planId),
+        )
         val pendingPayees = db.payeeDao().listPendingPush(planId)
         if (pendingTxns.isEmpty() && pendingPayees.isEmpty()) {
             onProgress("Nothing pending")
