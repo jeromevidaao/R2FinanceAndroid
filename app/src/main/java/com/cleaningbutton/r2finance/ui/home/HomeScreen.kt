@@ -81,23 +81,12 @@ fun HomeScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                Row(
+                StatCard(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    StatCard(
-                        modifier = Modifier.weight(1f),
-                        label = "On budget",
-                        value = if (agg.ready) Money.format(home.onBudgetTotal) else "…",
-                        hint = if (agg.ready) "${home.onBudgetCount} accounts" else "Computing…",
-                    )
-                    StatCard(
-                        modifier = Modifier.weight(1f),
-                        label = "Tracking",
-                        value = if (agg.ready) Money.format(home.trackingTotal) else "…",
-                        hint = if (agg.ready) "${home.trackingCount} accounts" else "Computing…",
-                    )
-                }
+                    label = "Accounts",
+                    value = if (agg.ready) Money.format(home.accountsTotal) else "…",
+                    hint = if (agg.ready) "${home.openAccountCount} open" else "Computing…",
+                )
             }
 
             if (home.inboxCount > 0) {

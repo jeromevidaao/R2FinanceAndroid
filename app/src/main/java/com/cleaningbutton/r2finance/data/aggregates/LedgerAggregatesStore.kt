@@ -45,10 +45,8 @@ import kotlinx.coroutines.withContext
  * - Debounces during bulk cloud hydrate so UI stays smooth
  */
 data class HomeAggregates(
-    val onBudgetTotal: Long = 0L,
-    val trackingTotal: Long = 0L,
-    val onBudgetCount: Int = 0,
-    val trackingCount: Int = 0,
+    val accountsTotal: Long = 0L,
+    val openAccountCount: Int = 0,
     val inboxCount: Int = 0,
 )
 
@@ -330,8 +328,6 @@ object AggregatesBuilder {
                 }
 
         val open = accountsWithBal
-        val onBudget = open.filter { it.account.onBudget }
-        val tracking = open.filter { !it.account.onBudget }
         val acctOnBudget = snap.accounts.associate { it.id to it.onBudget }
         val inboxCount =
             snap.transactions.count { t ->
@@ -365,10 +361,8 @@ object AggregatesBuilder {
             monthReports = monthReports,
             home =
                 HomeAggregates(
-                    onBudgetTotal = onBudget.sumOf { it.balanceMilli },
-                    trackingTotal = tracking.sumOf { it.balanceMilli },
-                    onBudgetCount = onBudget.size,
-                    trackingCount = tracking.size,
+                    accountsTotal = open.sumOf { it.balanceMilli },
+                    openAccountCount = open.size,
                     inboxCount = inboxCount,
                 ),
             accounts = accountsWithBal,
@@ -470,12 +464,8 @@ object AggregatesBuilder {
             monthReports = monthReports,
             home =
                 HomeAggregates(
-                    onBudgetTotal =
-                        accountsWithBal.filter { it.account.onBudget }.sumOf { it.balanceMilli },
-                    trackingTotal =
-                        accountsWithBal.filter { !it.account.onBudget }.sumOf { it.balanceMilli },
-                    onBudgetCount = accountsWithBal.count { it.account.onBudget },
-                    trackingCount = accountsWithBal.count { !it.account.onBudget },
+                    accountsTotal = accountsWithBal.sumOf { it.balanceMilli },
+                    openAccountCount = accountsWithBal.size,
                     inboxCount = analyticsTxns.count { !it.approved },
                 ),
             accounts = accountsWithBal,
