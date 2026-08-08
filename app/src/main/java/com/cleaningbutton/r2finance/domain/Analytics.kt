@@ -95,6 +95,18 @@ object Analytics {
     const val UNCAT = "__uncat"
     const val NO_GROUP = "__nogroup"
 
+    /**
+     * YNAB internal income category. Amounts here are **income**, not spending.
+     * YNAB month/Reflect spending = net of everything else (refunds reduce spending).
+     */
+    const val INFLOW_READY_TO_ASSIGN = "Inflow: Ready to Assign"
+
+    fun isInflowReadyToAssign(categoryName: String?): Boolean {
+        if (categoryName.isNullOrBlank()) return false
+        return categoryName.equals(INFLOW_READY_TO_ASSIGN, ignoreCase = true) ||
+            categoryName.contains("Ready to Assign", ignoreCase = true)
+    }
+
     fun monthKey(date: String): String = date.take(7)
 
     fun yearKey(date: String): String = date.take(4)
@@ -300,10 +312,9 @@ object Analytics {
         accountNames: Map<String, String> = emptyMap(),
         now: java.time.LocalDate = java.time.LocalDate.now(),
         /**
-         * When true, only approved rows count (strict YNAB Reflect).
-         * Default **false**: R2Finance includes unapproved (inbox) outflows so
-         * Reflect is not $0 while spend still sits in Spending/to-approve.
-         * Transfers are always excluded.
+         * When true, only approved rows count.
+         * Default **false**: match YNAB month/Reflect activity (includes unapproved /
+         * inbox). Transfers are always excluded. Spending is **net** of refunds.
          */
         approvedOnly: Boolean = false,
     ): SpendingReport {
@@ -315,7 +326,18 @@ object Analytics {
                     inBounds(it.date, bounds.from, bounds.to)
             }
 
+        fun catName(id: String?): String? =
+            when {
+                id == null -> null
+                else -> categoryNames[id]
+            }
+
+        fun isRta(categoryId: String?): Boolean =
+            isInflowReadyToAssign(catName(categoryId))
+
         var inflow = 0L
+        // Net spending activity (negative = spent). Refunds/returns are positive and
+        // reduce this total — same as YNAB month category activity excl. RTA.
         var outflow = 0L
         val byCat = mutableMapOf<String, Long>()
         val byGroup = mutableMapOf<String, Long>()
@@ -332,31 +354,27 @@ object Analytics {
             val nonTransferSubs =
                 if (hasSplits) t.splitLines.filter { it.transferAccountId == null } else emptyList()
 
-            var txnIn = 0L
-            var txnOut = 0L
-            if (hasSplits) {
-                for (line in nonTransferSubs) {
-                    if (line.amountMilli > 0) txnIn += line.amountMilli
-                    if (line.amountMilli < 0) txnOut += line.amountMilli
-                }
-                // Defensive: incomplete split rows in Room must not zero a real parent outflow.
-                if (txnIn == 0L && txnOut == 0L) {
-                    if (t.amountMilli > 0) txnIn = t.amountMilli
-                    if (t.amountMilli < 0) txnOut = t.amountMilli
-                }
-            } else {
-                if (t.amountMilli > 0) txnIn = t.amountMilli
-                if (t.amountMilli < 0) txnOut = t.amountMilli
-            }
-            inflow += txnIn
-            outflow += txnOut
+            data class Line(
+                val amountMilli: Long,
+                val categoryId: String?,
+                val categoryGroupId: String?,
+                val payeeId: String?,
+            )
 
-            val spendLines =
+            val lines: List<Line> =
                 if (hasSplits && nonTransferSubs.any { it.amountMilli != 0L }) {
-                    nonTransferSubs.filter { it.amountMilli < 0 }
-                } else if (t.amountMilli < 0) {
+                    nonTransferSubs.map {
+                        Line(
+                            amountMilli = it.amountMilli,
+                            categoryId = it.categoryId,
+                            categoryGroupId = it.categoryGroupId,
+                            payeeId = it.payeeId,
+                        )
+                    }
+                } else if (hasSplits && nonTransferSubs.all { it.amountMilli == 0L }) {
+                    // Defensive: incomplete split rows in Room must not zero a real parent.
                     listOf(
-                        AnalyticsSplitLine(
+                        Line(
                             amountMilli = t.amountMilli,
                             categoryId = t.categoryId,
                             categoryGroupId = t.categoryGroupId,
@@ -364,9 +382,25 @@ object Analytics {
                         ),
                     )
                 } else {
-                    emptyList()
+                    listOf(
+                        Line(
+                            amountMilli = t.amountMilli,
+                            categoryId = t.categoryId,
+                            categoryGroupId = t.categoryGroupId,
+                            payeeId = t.payeeId,
+                        ),
+                    )
                 }
-            for (line in spendLines) {
+
+            var txnIn = 0L
+            var txnSpendNet = 0L
+            for (line in lines) {
+                if (isRta(line.categoryId)) {
+                    // Income only — never part of Total spending.
+                    txnIn += line.amountMilli
+                    continue
+                }
+                txnSpendNet += line.amountMilli
                 val catId = line.categoryId ?: UNCAT
                 byCat[catId] = (byCat[catId] ?: 0L) + line.amountMilli
                 val gKey = line.categoryGroupId ?: NO_GROUP
@@ -376,8 +410,10 @@ object Analytics {
                     byPayee[payeeId] = (byPayee[payeeId] ?: 0L) + line.amountMilli
                 }
             }
+            inflow += txnIn
+            outflow += txnSpendNet
 
-            byAccount[t.accountId] = (byAccount[t.accountId] ?: 0L) + txnIn + txnOut
+            byAccount[t.accountId] = (byAccount[t.accountId] ?: 0L) + txnSpendNet
 
             val mk = monthKey(t.date)
             val yk = yearKey(t.date)
@@ -387,10 +423,11 @@ object Analytics {
             yb.count += 1
             mb.inflow += txnIn
             yb.inflow += txnIn
-            mb.outflow += txnOut
-            yb.outflow += txnOut
+            mb.outflow += txnSpendNet
+            yb.outflow += txnSpendNet
         }
 
+        // Share denominator = |net spending| so refunds are reflected in the total.
         val totalOutAbs = kotlin.math.abs(outflow)
         val byCategory =
             rankOutflows(byCat, { id ->

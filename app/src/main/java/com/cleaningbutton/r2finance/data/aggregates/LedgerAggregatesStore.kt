@@ -185,6 +185,7 @@ class LedgerAggregatesStore(
                 groupNames = s.groupNames,
                 payeeNames = s.payeeNames,
                 accountNames = s.accountNames,
+                // YNAB month/Reflect includes unapproved; spending is net of refunds.
                 approvedOnly = false,
             )
     }

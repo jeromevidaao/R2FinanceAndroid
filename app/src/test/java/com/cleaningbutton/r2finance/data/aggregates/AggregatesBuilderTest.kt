@@ -36,9 +36,10 @@ class AggregatesBuilderTest {
         val txns =
             listOf(
                 txn("$ym-05", -10_000_00),
-                txn("$ym-10", 5_000_00, categoryId = null),
+                // Refund in spending cat — nets against Total spending (not income)
+                txn("$ym-10", 5_000_00, categoryId = "food"),
                 txn("$prev-15", -2_000_00),
-                txn("$ym-12", -500_00, approved = false), // excluded
+                txn("$ym-12", -500_00, approved = false), // unapproved still in YNAB activity
                 txn("$ym-13", -100_00, transfer = "acct-2"), // excluded
             )
 
@@ -52,16 +53,16 @@ class AggregatesBuilderTest {
         assertTrue(agg.ready)
         assertEquals(5, agg.txnCount)
         assertNotNull(agg.reflectReport)
-        // Transfer excluded; unapproved included so Reflect is not $0 with inbox spend
-        assertEquals(-10_500_00L, agg.reflectReport!!.outflowMilli)
+        // Transfer excluded; unapproved included; refund nets: -10000 +5000 -500 = -5500
+        assertEquals(-5_500_00L, agg.reflectReport!!.outflowMilli)
         assertTrue(agg.presetReports.containsKey(PresetId.LAST_3.key))
         assertTrue(agg.monthReports.containsKey(ym))
         assertEquals(1, agg.home.inboxCount)
         assertTrue(agg.incomeTrend.isNotEmpty())
 
         val last3 = agg.presetReports[PresetId.LAST_3.key]!!
-        // Approved + unapproved outflows in range (transfer still excluded)
-        assertEquals(-12_500_00L, last3.outflowMilli)
+        // Current + prev + unapproved (transfer excluded): -10000+5000-500-2000 = -7500
+        assertEquals(-7_500_00L, last3.outflowMilli)
     }
 
     @Test

@@ -29,7 +29,8 @@ class AnalyticsTest {
             listOf(
                 txn("2026-03-01", -5000, categoryId = "food"),
                 txn("2026-03-05", -3000, categoryId = "gas"),
-                txn("2026-03-10", 10000, categoryId = null, payeeId = null), // income
+                // RTA income — not spending
+                txn("2026-03-10", 10000, categoryId = "rta", payeeId = null),
                 txn("2026-03-12", -2000, transfer = "acct-2"), // transfer ignored
                 txn("2026-02-01", -9000, categoryId = "food"), // other month
             )
@@ -38,7 +39,12 @@ class AnalyticsTest {
                 transactions = txns,
                 mode = PeriodMode.MONTH,
                 periodKey = "2026-03",
-                categoryNames = mapOf("food" to "Food", "gas" to "Gas"),
+                categoryNames =
+                    mapOf(
+                        "food" to "Food",
+                        "gas" to "Gas",
+                        "rta" to Analytics.INFLOW_READY_TO_ASSIGN,
+                    ),
             )
         assertEquals(10000L, report.inflowMilli)
         assertEquals(-8000L, report.outflowMilli)
@@ -56,7 +62,7 @@ class AnalyticsTest {
             listOf(
                 txn("2026-01-15", -1000),
                 txn("2026-02-15", -3000),
-                txn("2026-02-20", 5000, categoryId = null),
+                txn("2026-02-20", 5000, categoryId = "rta"),
                 txn("2025-12-01", -9999), // other year
             )
         val report =
@@ -64,6 +70,7 @@ class AnalyticsTest {
                 transactions = txns,
                 mode = PeriodMode.YEAR,
                 periodKey = "2026",
+                categoryNames = mapOf("rta" to Analytics.INFLOW_READY_TO_ASSIGN),
             )
         assertEquals(-4000L, report.outflowMilli)
         assertEquals(5000L, report.inflowMilli)
@@ -78,17 +85,19 @@ class AnalyticsTest {
             listOf(
                 txn("2025-06-01", -1000),
                 txn("2026-01-01", -2000),
-                txn("2026-03-01", 500),
+                // Refund in a spending category nets against spending (not income)
+                txn("2026-03-01", 500, categoryId = "food"),
             )
         val report =
             Analytics.buildSpendingReport(
                 transactions = txns,
                 mode = PeriodMode.ALL,
                 periodKey = "all",
+                categoryNames = mapOf("food" to "Food"),
             )
         assertEquals(2, report.yearlyTrend.size)
-        assertEquals(-3000L, report.outflowMilli)
-        assertEquals(500L, report.inflowMilli)
+        assertEquals(-2500L, report.outflowMilli) // -1000 -2000 +500 refund
+        assertEquals(0L, report.inflowMilli)
         assertEquals(-2500L, report.netMilli)
     }
 
@@ -141,8 +150,7 @@ class AnalyticsTest {
 
     @Test
     fun unapproved_includedInSpendingByDefault() {
-        // R2Finance Reflect includes inbox outflows so current month is not $0
-        // while rows still sit in Spending/to-approve.
+        // YNAB month/Reflect activity includes unapproved (inbox) amounts.
         val txns =
             listOf(
                 txn("2026-08-01", -10000, categoryId = "food"),
@@ -222,5 +230,55 @@ class AnalyticsTest {
         assertEquals(-10000L, report.outflowMilli)
         assertEquals(1, report.byCategory.size)
         assertEquals(-10000L, report.byCategory[0].amountMilli)
+    }
+
+    @Test
+    fun refundsNetAgainstSpending_notCountedAsIncome() {
+        // YNAB July-style: gross outflows 100, refund 30 → Total spending 70.
+        val txns =
+            listOf(
+                txn("2026-07-01", -10000, categoryId = "food"),
+                txn("2026-07-05", 3000, categoryId = "food"), // refund
+                txn("2026-07-10", 50000, categoryId = "rta"), // income
+            )
+        val report =
+            Analytics.buildSpendingReport(
+                transactions = txns,
+                mode = PeriodMode.MONTH,
+                periodKey = "2026-07",
+                categoryNames =
+                    mapOf(
+                        "food" to "Food",
+                        "rta" to Analytics.INFLOW_READY_TO_ASSIGN,
+                    ),
+            )
+        assertEquals(50000L, report.inflowMilli)
+        assertEquals(-7000L, report.outflowMilli)
+        assertEquals(1, report.byCategory.size)
+        assertEquals(-7000L, report.byCategory[0].amountMilli)
+    }
+
+    @Test
+    fun rtaNeverInSpendingBreakdown() {
+        val txns =
+            listOf(
+                txn("2026-07-01", -1000, categoryId = "food"),
+                txn("2026-07-02", -2000, categoryId = "rta"), // mis-signed RTA still income
+            )
+        val report =
+            Analytics.buildSpendingReport(
+                transactions = txns,
+                mode = PeriodMode.MONTH,
+                periodKey = "2026-07",
+                categoryNames =
+                    mapOf(
+                        "food" to "Food",
+                        "rta" to Analytics.INFLOW_READY_TO_ASSIGN,
+                    ),
+            )
+        assertEquals(-2000L, report.inflowMilli)
+        assertEquals(-1000L, report.outflowMilli)
+        assertEquals(1, report.byCategory.size)
+        assertEquals("Food", report.byCategory[0].name)
     }
 }
