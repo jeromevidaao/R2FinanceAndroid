@@ -21,12 +21,15 @@ import androidx.compose.ui.unit.sp
 import com.cleaningbutton.r2finance.R
 import com.cleaningbutton.r2finance.data.repository.TransactionRow
 import com.cleaningbutton.r2finance.domain.CategoryColors
+import com.cleaningbutton.r2finance.domain.findSisterPairs
+import com.cleaningbutton.r2finance.domain.flattenSisterPairs
 
 enum class CategoryChipKind {
     Needed,
     Category,
     Inflow,
     Transfer,
+    Sister,
     Airbnb,
 }
 
@@ -73,6 +76,8 @@ private val ICON_RULES = listOf(
 const val AIRBNB_COLOR = "#FF5A5F"
 const val NEEDED_COLOR = "#F59E0B"
 const val TRANSFER_COLOR = "#A78BFA"
+/** Offsetting sister pairs (CC payment ↔ transfer, both legs of a transfer). */
+const val SISTER_COLOR = "#38BDF8"
 
 fun isAirbnbName(name: String?, groupName: String? = null): Boolean {
     val hay = listOfNotNull(name, groupName).joinToString(" ").lowercase()
@@ -236,20 +241,58 @@ data class InboxCategoryGroup(
     val chip: CategoryChipModel,
     val railColorHex: String,
     val rows: List<TransactionRow>,
+    /**
+     * When true, rows are ordered as sister pairs [a1,b1,a2,b2,…]
+     * (equal opposite amounts that cancel).
+     */
+    val sisterPairs: Boolean = false,
+    /** Number of sister pairs when [sisterPairs] is true. */
+    val pairCount: Int = 0,
 )
 
+private const val SISTERS_KEY = "__sisters"
+
+private fun sisterPairsChip(pairCount: Int): CategoryChipModel =
+    CategoryChipModel(
+        label = if (pairCount == 1) {
+            "Sister pair · net $0"
+        } else {
+            "Sister pairs · $pairCount · net $0"
+        },
+        kind = CategoryChipKind.Sister,
+        icon = "⚖️",
+        railColorHex = SISTER_COLOR,
+    )
+
 /**
- * Group inbox rows by category for bulk approve.
- * Order: Category Needed → named categories (A–Z) → transfers.
- * Within each group: newest date first.
+ * Group inbox rows for bulk approve.
+ * Order: Sister pairs (cancel out) → Category Needed → named categories (A–Z) → transfers.
+ * Within each category group: newest date first.
+ * Sister group: pairs listed consecutively (outflow then inflow).
  */
 fun groupInboxByCategory(rows: List<TransactionRow>): List<InboxCategoryGroup> {
-    val map = rows.groupBy { inboxGroupKey(it) }
-    val groups = map.map { (key, list) ->
+    val (pairs, unpaired) = findSisterPairs(rows)
+    val groups = mutableListOf<InboxCategoryGroup>()
+
+    if (pairs.isNotEmpty()) {
+        val chip = sisterPairsChip(pairs.size)
+        groups += InboxCategoryGroup(
+            key = SISTERS_KEY,
+            label = chip.label,
+            chip = chip,
+            railColorHex = chip.railColorHex,
+            rows = flattenSisterPairs(pairs),
+            sisterPairs = true,
+            pairCount = pairs.size,
+        )
+    }
+
+    val map = unpaired.groupBy { inboxGroupKey(it) }
+    for ((key, list) in map) {
         val sorted = list.sortedByDescending { it.txn.date }
         val sample = sorted.first()
         val chip = categoryChipForRow(sample, sample.categoryGroupName)
-        InboxCategoryGroup(
+        groups += InboxCategoryGroup(
             key = key,
             label = chip.label,
             chip = chip,
@@ -257,12 +300,14 @@ fun groupInboxByCategory(rows: List<TransactionRow>): List<InboxCategoryGroup> {
             rows = sorted,
         )
     }
+
     return groups.sortedWith(
         compareBy<InboxCategoryGroup> {
             when {
-                it.key == "__needed" -> 0
-                it.key.startsWith("__transfer") -> 2
-                else -> 1
+                it.key == SISTERS_KEY -> 0
+                it.key == "__needed" -> 1
+                it.key.startsWith("__transfer") -> 3
+                else -> 2
             }
         }.thenBy { it.label.lowercase() },
     )
@@ -295,6 +340,10 @@ private val TransferBg = Color(0x2EA78BFA)
 private val TransferFg = Color(0xFFDDD6FE)
 private val TransferBorder = Color(0x59A78BFA)
 
+private val SisterBg = Color(0x2E38BDF8)
+private val SisterFg = Color(0xFFBAE6FD)
+private val SisterBorder = Color(0x6638BDF8)
+
 private val AirbnbBg = Color(0x2EFF5A5F)
 private val AirbnbFg = Color(0xFFFFB4B8)
 private val AirbnbBorder = Color(0x80FF5A5F)
@@ -310,6 +359,7 @@ fun CategoryChip(
         CategoryChipKind.Category -> Triple(CategoryBg, CategoryFg, CategoryBorder)
         CategoryChipKind.Inflow -> Triple(InflowBg, InflowFg, InflowBorder)
         CategoryChipKind.Transfer -> Triple(TransferBg, TransferFg, TransferBorder)
+        CategoryChipKind.Sister -> Triple(SisterBg, SisterFg, SisterBorder)
         CategoryChipKind.Airbnb -> Triple(AirbnbBg, AirbnbFg, AirbnbBorder)
     }
     val shape = RoundedCornerShape(999.dp)

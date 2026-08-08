@@ -55,6 +55,7 @@ import com.cleaningbutton.r2finance.data.cloud.SyncCoordinator
 import com.cleaningbutton.r2finance.data.repository.TransactionRow
 import com.cleaningbutton.r2finance.domain.Money
 import com.cleaningbutton.r2finance.domain.RelativeDate
+import com.cleaningbutton.r2finance.domain.isSisterPairEnd
 import com.cleaningbutton.r2finance.ui.categorize.CategorizeDialog
 import com.cleaningbutton.r2finance.ui.category.CategoryChip
 import com.cleaningbutton.r2finance.ui.category.groupInboxByCategory
@@ -321,6 +322,8 @@ fun InboxScreen(container: AppContainer) {
                                     railColorHex = group.railColorHex,
                                     isGroupFirst = idx == 0,
                                     isGroupLast = idx == group.rows.lastIndex,
+                                    showCancelsPair =
+                                        group.sisterPairs && isSisterPairEnd(idx),
                                     onToggleSelect = {
                                         selectedIds =
                                             if (row.txn.id in selectedIds) {
@@ -430,6 +433,7 @@ private fun InboxTxnRow(
     railColorHex: String,
     isGroupFirst: Boolean,
     isGroupLast: Boolean,
+    showCancelsPair: Boolean = false,
     onToggleSelect: () -> Unit,
     onOpenDetail: () -> Unit,
 ) {
@@ -448,6 +452,10 @@ private fun InboxTxnRow(
         isGroupLast -> RoundedCornerShape(bottomStart = 3.dp, bottomEnd = 3.dp)
         else -> RoundedCornerShape(0.dp)
     }
+    val payeeLabel = buildString {
+        append(row.payeeName ?: txn.importPayeeName ?: "No payee")
+        if (showCancelsPair) append(" · cancels pair")
+    }
 
     Surface(
         color = if (selected) {
@@ -461,7 +469,12 @@ private fun InboxTxnRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(onClick = onOpenDetail)
-                .padding(start = 8.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                .padding(
+                    start = 8.dp,
+                    end = 4.dp,
+                    top = 4.dp,
+                    bottom = if (showCancelsPair) 10.dp else 4.dp,
+                ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
@@ -485,7 +498,7 @@ private fun InboxTxnRow(
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    row.payeeName ?: txn.importPayeeName ?: "No payee",
+                    payeeLabel,
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.SemiBold,
                 )
