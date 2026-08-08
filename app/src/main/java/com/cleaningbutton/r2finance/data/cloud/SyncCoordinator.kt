@@ -15,8 +15,11 @@ import kotlinx.coroutines.sync.withLock
  * 1. UI always reads/writes **Room** (works with zero network)
  * 2. Local edits → syncStatus = PENDING_PUSH
  * 3. When network returns → push PENDING_PUSH → DynamoDB
- * 4. Then pull DDB → Room
+ * 4. Then **delta** pull DDB → Room (full only on empty DB or periodic heal)
  * 5. YNAB sync is **backend-only** (EventBridge ~15m or optional tick) — not required for phone ops
+ *
+ * Day-to-day HTTP stays light: [KEY_SYNC_CURSOR] drives GET /v1/sync/changes?since=…
+ * Silent full resync every [FULL_SYNC_INTERVAL_MS] avoids long-term drift.
  */
 class SyncCoordinator(
     context: Context,
@@ -41,6 +44,10 @@ class SyncCoordinator(
     private val _pendingCount = MutableStateFlow(0)
     val pendingCount: StateFlow<Int> = _pendingCount.asStateFlow()
 
+    fun syncCursor(): Long = prefs.getLong(KEY_SYNC_CURSOR, 0L)
+
+    fun lastFullSyncAt(): Long = prefs.getLong(KEY_LAST_FULL_SYNC_AT, 0L)
+
     suspend fun refreshLocalDataFlag(planId: String = DEFAULT_PLAN_ID) {
         val accounts = db.accountDao().countOpen(planId)
         val txns = db.transactionDao().countForPlan(planId)
@@ -49,31 +56,50 @@ class SyncCoordinator(
     }
 
     /**
-     * Local-first entry: show Room immediately; only full-hydrate when empty.
-     * If there is already data, still try a light online flush (push pending) when possible.
+     * Local-first entry: show Room immediately; full-hydrate only when empty.
+     * When data exists: push pending + lightweight delta (or silent full if due).
      */
     suspend fun ensureHydrated(planId: String = DEFAULT_PLAN_ID): Result<CloudSyncReport?> =
         mutex.withLock {
             refreshLocalDataFlag(planId)
             if (!_hasLocalData.value) {
-                return@withLock doFullSyncLocked(planId, pullYnab = false)
+                return@withLock doPullLocked(
+                    planId = planId,
+                    pullYnab = false,
+                    forceFull = true,
+                    showBusy = true,
+                )
             }
-            // Already have data — best-effort push of any offline work (no full re-download).
-            doPushOnlyLocked(planId)
-            Result.success(null)
+            // Already have data — push offline work + delta (or silent full if due).
+            doPushThenPullLocked(
+                planId = planId,
+                pullYnab = false,
+                forceFull = shouldFullSync(),
+                showBusy = false,
+            )
         }
 
     /**
      * Called when network becomes available (or app cold-start online).
-     * Push offline queue → DDB, then pull DDB → Room. YNAB later on backend.
+     * Push offline queue → DDB, then **delta** pull (full only if due / empty).
      */
     suspend fun syncWhenOnline(planId: String = DEFAULT_PLAN_ID): Result<CloudSyncReport?> =
         mutex.withLock {
             refreshLocalDataFlag(planId)
             if (!_hasLocalData.value) {
-                return@withLock doFullSyncLocked(planId, pullYnab = false)
+                return@withLock doPullLocked(
+                    planId = planId,
+                    pullYnab = false,
+                    forceFull = true,
+                    showBusy = true,
+                )
             }
-            doPushThenPullLocked(planId, pullYnab = false)
+            doPushThenPullLocked(
+                planId = planId,
+                pullYnab = false,
+                forceFull = shouldFullSync(),
+                showBusy = false,
+            )
         }
 
     /**
@@ -87,12 +113,27 @@ class SyncCoordinator(
         }
 
     /**
-     * Manual refresh (toolbar). Push pending, pull DDB, and tick YNAB on the server.
+     * Manual refresh (toolbar). Push pending, tick YNAB on server, pull delta
+     * (or full if forced / interval due).
      */
-    suspend fun refresh(planId: String = DEFAULT_PLAN_ID): Result<CloudSyncReport> =
+    suspend fun refresh(
+        planId: String = DEFAULT_PLAN_ID,
+        forceFull: Boolean = false,
+    ): Result<CloudSyncReport> =
         mutex.withLock {
-            doFullSyncLocked(planId, pullYnab = true).map { it!! }
+            doPushThenPullLocked(
+                planId = planId,
+                pullYnab = true,
+                forceFull = forceFull || shouldFullSync(),
+                showBusy = true,
+            ).map { it!! }
         }
+
+    private fun shouldFullSync(): Boolean {
+        val lastFull = lastFullSyncAt()
+        if (lastFull <= 0L) return true
+        return System.currentTimeMillis() - lastFull >= FULL_SYNC_INTERVAL_MS
+    }
 
     private suspend fun doPushOnlyLocked(
         planId: String,
@@ -114,7 +155,6 @@ class SyncCoordinator(
             }
             Result.success(Unit)
         } catch (e: Exception) {
-            // Stay silent-ish: still offline or flaky link; Room remains correct.
             if (!silent) {
                 _statusMessage.value = "Will retry upload: ${e.message}"
             }
@@ -129,69 +169,93 @@ class SyncCoordinator(
     private suspend fun doPushThenPullLocked(
         planId: String,
         pullYnab: Boolean,
+        forceFull: Boolean,
+        showBusy: Boolean,
     ): Result<CloudSyncReport?> {
-        _isSyncing.value = true
+        if (showBusy) _isSyncing.value = true
         return try {
             val pending = db.transactionDao().countPendingPush(planId)
             if (pending > 0) {
-                _statusMessage.value = "Uploading $pending offline change(s)…"
+                if (showBusy) _statusMessage.value = "Uploading $pending offline change(s)…"
                 runCatching {
-                    cloudSync.pushLocalPending(planId) { step -> _statusMessage.value = step }
+                    cloudSync.pushLocalPending(planId) { step ->
+                        if (showBusy) _statusMessage.value = step
+                    }
                 }.onFailure {
-                    _statusMessage.value = "Upload deferred: ${it.message}"
+                    if (showBusy) _statusMessage.value = "Upload deferred: ${it.message}"
                 }
             }
-            _statusMessage.value = "Refreshing from cloud…"
-            val report = cloudSync.syncFromCloud(pullYnab = pullYnab) { step ->
-                _statusMessage.value = step
-            }
-            markSyncedOk(planId, report)
-            Result.success(report)
+            doPullLocked(
+                planId = planId,
+                pullYnab = pullYnab,
+                forceFull = forceFull,
+                showBusy = showBusy,
+                alreadyBusy = true,
+            )
         } catch (e: Exception) {
-            _statusMessage.value = "Sync failed: ${e.message}"
+            if (showBusy) _statusMessage.value = "Sync failed: ${e.message}"
             Result.failure(e)
         } finally {
-            _isSyncing.value = false
+            if (showBusy) _isSyncing.value = false
         }
     }
 
-    private suspend fun doFullSyncLocked(
+    private suspend fun doPullLocked(
         planId: String,
         pullYnab: Boolean,
+        forceFull: Boolean,
+        showBusy: Boolean,
+        alreadyBusy: Boolean = false,
     ): Result<CloudSyncReport?> {
-        _isSyncing.value = true
-        _statusMessage.value = "Syncing with cloud…"
+        if (showBusy && !alreadyBusy) _isSyncing.value = true
         return try {
-            val pending = db.transactionDao().countPendingPush(planId)
-            if (pending > 0) {
-                _statusMessage.value = "Uploading $pending offline change(s)…"
-                runCatching {
-                    cloudSync.pushLocalPending(planId) { step -> _statusMessage.value = step }
-                }
+            val since = if (forceFull) 0L else syncCursor()
+            if (showBusy) {
+                _statusMessage.value =
+                    if (forceFull || since <= 0L) "Full sync from cloud…"
+                    else "Refreshing changes…"
             }
-            val report = cloudSync.syncFromCloud(pullYnab = pullYnab) { step ->
-                _statusMessage.value = step
+            val report = cloudSync.syncFromCloud(
+                pullYnab = pullYnab,
+                since = since,
+                forceFull = forceFull || since <= 0L,
+            ) { step ->
+                if (showBusy) _statusMessage.value = step
             }
             markSyncedOk(planId, report)
             Result.success(report)
         } catch (e: Exception) {
-            _statusMessage.value = "Sync failed: ${e.message}"
+            if (showBusy) _statusMessage.value = "Sync failed: ${e.message}"
             Result.failure(e)
         } finally {
-            _isSyncing.value = false
+            if (showBusy && !alreadyBusy) _isSyncing.value = false
         }
     }
 
     private suspend fun markSyncedOk(planId: String, report: CloudSyncReport) {
         val now = System.currentTimeMillis()
-        prefs.edit().putLong(KEY_LAST_SYNCED_AT, now).apply()
+        val edit = prefs.edit().putLong(KEY_LAST_SYNCED_AT, now)
+        if (report.cursor > 0L) {
+            edit.putLong(KEY_SYNC_CURSOR, report.cursor)
+        }
+        if (report.mode == "full" || report.mode.isBlank() && report.cursor > 0L) {
+            // Treat successful full (or first) pull as full baseline.
+            if (report.mode == "full" || lastFullSyncAt() <= 0L) {
+                edit.putLong(KEY_LAST_FULL_SYNC_AT, now)
+            }
+        }
+        if (report.mode == "full") {
+            edit.putLong(KEY_LAST_FULL_SYNC_AT, now)
+        }
+        edit.apply()
         _lastSyncedAt.value = now
         refreshLocalDataFlag(planId)
         val pending = _pendingCount.value
         _statusMessage.value =
             buildString {
-                append("Synced “${report.planName}”: ${report.accounts} accounts, ")
-                append("${report.transactions} transactions")
+                val modeLabel = if (report.mode == "delta") "delta" else report.mode
+                append("Synced “${report.planName}” ($modeLabel): ")
+                append("${report.accounts} accounts, ${report.transactions} transactions")
                 if (pending > 0) append(" · $pending still pending upload")
             }
     }
@@ -200,5 +264,9 @@ class SyncCoordinator(
         const val DEFAULT_PLAN_ID = "default"
         private const val PREFS = "r2finance_sync"
         private const val KEY_LAST_SYNCED_AT = "last_synced_at"
+        private const val KEY_SYNC_CURSOR = "sync_cursor"
+        private const val KEY_LAST_FULL_SYNC_AT = "last_full_sync_at"
+        /** Silent full resync interval to heal drift without daily megabyte pulls. */
+        const val FULL_SYNC_INTERVAL_MS: Long = 24L * 60L * 60L * 1000L
     }
 }

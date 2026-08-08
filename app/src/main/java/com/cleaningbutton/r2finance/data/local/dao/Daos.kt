@@ -59,6 +59,17 @@ interface AccountDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(accounts: List<AccountEntity>)
+
+    @Query(
+        """
+        UPDATE accounts
+        SET deleted = 1, updatedAt = :now
+        WHERE planId = :planId
+          AND syncStatus != 'PENDING_PUSH'
+          AND deleted = 0
+        """,
+    )
+    suspend fun softDeleteAllSynced(planId: String, now: Long)
 }
 
 @Dao
@@ -275,6 +286,21 @@ interface TransactionDao {
 
     @Update
     suspend fun update(txn: TransactionEntity)
+
+    /**
+     * Full-resync reconcile: soft-delete every synced (non-pending) live row so
+     * a subsequent upsert of the server live set heals drift without huge IN lists.
+     */
+    @Query(
+        """
+        UPDATE transactions
+        SET deleted = 1, updatedAt = :now
+        WHERE planId = :planId
+          AND syncStatus != 'PENDING_PUSH'
+          AND deleted = 0
+        """,
+    )
+    suspend fun softDeleteAllSynced(planId: String, now: Long)
 
     @Query("SELECT * FROM subtransactions WHERE transactionId = :txnId AND deleted = 0")
     suspend fun getSubs(txnId: String): List<SubTransactionEntity>

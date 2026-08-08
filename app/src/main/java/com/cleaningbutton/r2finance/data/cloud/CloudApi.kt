@@ -91,6 +91,9 @@ data class CloudTransaction(
     val transferAccountId: String? = null,
     val transferTransactionId: String? = null,
     val importId: String? = null,
+    /** Soft-delete tombstone from server (delta sync). */
+    val deleted: Boolean = false,
+    val updatedAt: Long = 0,
     val subtransactions: List<CloudSubTransaction> = emptyList(),
     /** Present on /v1/inbox only. */
     val accountName: String? = null,
@@ -103,6 +106,73 @@ data class CloudTransaction(
         ?: clientId?.takeIf { it.isNotBlank() }
         ?: ynabId
 }
+
+@Serializable
+data class CloudSyncChangesResponse(
+    val mode: String = "full",
+    val serverTime: Long = 0,
+    val cursor: Long = 0,
+    val since: Long = 0,
+    val plan: CloudPlan? = null,
+    val accounts: List<CloudAccountDelta> = emptyList(),
+    val groups: List<CloudCategoryGroupDelta> = emptyList(),
+    val categories: List<CloudCategoryDelta> = emptyList(),
+    val payees: List<CloudPayeeDelta> = emptyList(),
+    val transactions: List<CloudTransaction> = emptyList(),
+    val counts: CloudSyncCounts? = null,
+)
+
+@Serializable
+data class CloudSyncCounts(
+    val accounts: Int = 0,
+    val groups: Int = 0,
+    val categories: Int = 0,
+    val payees: Int = 0,
+    val transactions: Int = 0,
+)
+
+@Serializable
+data class CloudAccountDelta(
+    val ynabId: String,
+    val name: String,
+    val type: String = "checking",
+    val balance: Long = 0,
+    val onBudget: Boolean = true,
+    val closed: Boolean = false,
+    val note: String? = null,
+    val transferPayeeId: String? = null,
+    val deleted: Boolean = false,
+    val updatedAt: Long = 0,
+)
+
+@Serializable
+data class CloudCategoryGroupDelta(
+    val ynabId: String,
+    val name: String,
+    val hidden: Boolean = false,
+    val deleted: Boolean = false,
+    val updatedAt: Long = 0,
+)
+
+@Serializable
+data class CloudCategoryDelta(
+    val ynabId: String,
+    val name: String,
+    val categoryGroupId: String? = null,
+    val hidden: Boolean = false,
+    val color: String? = null,
+    val deleted: Boolean = false,
+    val updatedAt: Long = 0,
+)
+
+@Serializable
+data class CloudPayeeDelta(
+    val ynabId: String,
+    val name: String,
+    val transferAccountId: String? = null,
+    val deleted: Boolean = false,
+    val updatedAt: Long = 0,
+)
 
 @Serializable
 data class CloudSubTransaction(
@@ -249,6 +319,22 @@ class CloudApi(
 
     suspend fun getTransactions(): List<CloudTransaction> =
         get("/v1/transactions", CloudTransactionsResponse.serializer()).transactions
+
+    /**
+     * Local-first sync: full snapshot (`since=0` / `full=1`) or incremental
+     * changes since the last server cursor (includes deleted tombstones).
+     */
+    suspend fun getSyncChanges(since: Long = 0L, full: Boolean = false): CloudSyncChangesResponse {
+        val q = buildString {
+            append("/v1/sync/changes?")
+            if (full || since <= 0L) {
+                append("full=1")
+            } else {
+                append("since=").append(since)
+            }
+        }
+        return get(q, CloudSyncChangesResponse.serializer())
+    }
 
     suspend fun getInbox(): CloudInboxResponse =
         get("/v1/inbox", CloudInboxResponse.serializer())
