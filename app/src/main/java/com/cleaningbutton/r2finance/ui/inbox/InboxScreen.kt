@@ -33,6 +33,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -68,8 +70,9 @@ import kotlinx.coroutines.launch
  * **Local-first / paint cache immediately:**
  * List comes from process-scoped [AppContainer.inboxCache] (Room → RAM).
  * Tab enter only re-binds the cache — no [SyncCoordinator.ensureHydrated]
- * (that runs once at process warmup). Full inbox API heal is manual refresh only.
- * Never full-screen-block on background [SyncCoordinator.isSyncing].
+ * (that runs once at process warmup).
+ * **Pull-to-refresh / toolbar:** push pending + delta + inbox heal from R2Finance
+ * while keeping the list painted.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -81,6 +84,7 @@ fun InboxScreen(container: AppContainer) {
     var detailTarget by remember { mutableStateOf<TransactionRow?>(null) }
     var inboxRefreshing by remember { mutableStateOf(false) }
     var refreshMessage by remember { mutableStateOf<String?>(null) }
+    val pullState = rememberPullToRefreshState()
 
     val sync = container.syncCoordinator
     val items by container.inboxCache.rows.collectAsStateWithLifecycle()
@@ -105,17 +109,32 @@ fun InboxScreen(container: AppContainer) {
         if (inboxRefreshing) return
         scope.launch {
             inboxRefreshing = true
-            refreshMessage = "Refreshing…"
-            // Manual only: inbox heal + optional delta. UI keeps showing Room cache.
-            runCatching {
-                container.cloudSync.pullInbox { step -> refreshMessage = step }
-            }.onSuccess { report ->
-                refreshMessage =
-                    "${report.inboxCount} need attention (${report.transactions} loaded)"
-            }.onFailure {
+            refreshMessage = "Refreshing from R2Finance…"
+            // Manual / pull-down: keep Room list painted; land latest cloud state.
+            // 1) Push offline queue + delta (or full if due) + server tick
+            val ledgerResult = sync.refresh(planId)
+            ledgerResult.onFailure {
                 refreshMessage = "Sync failed: ${it.message}"
             }
-            runCatching { sync.refresh(planId) }
+            // 2) Inbox heal so needs-attention matches /v1/inbox
+            val inboxResult = runCatching {
+                container.cloudSync.pullInbox { step -> refreshMessage = step }
+            }
+            inboxResult
+                .onSuccess { report ->
+                    val mode = ledgerResult.getOrNull()?.mode
+                    val modeLabel = mode?.let { " · $it" }.orEmpty()
+                    refreshMessage =
+                        "${report.inboxCount} need attention" +
+                            " (${report.transactions} loaded$modeLabel)"
+                }
+                .onFailure {
+                    if (ledgerResult.isFailure) {
+                        refreshMessage = "Sync failed: ${it.message}"
+                    } else {
+                        refreshMessage = "Inbox refresh failed: ${it.message}"
+                    }
+                }
             inboxRefreshing = false
         }
     }
@@ -230,132 +249,143 @@ fun InboxScreen(container: AppContainer) {
             }
         },
     ) { padding ->
-        when {
-            items.isNotEmpty() -> {
-                // Always paint Room/cache first (tab switch, mid-delta, mid-refresh).
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding),
-                    contentPadding = PaddingValues(
-                        top = 8.dp,
-                        bottom = if (hasSelection) 8.dp else 24.dp,
-                    ),
-                ) {
-                    banner?.let { msg ->
-                        item {
-                            Text(
-                                msg,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                            )
-                        }
-                    }
-                    categoryGroups.forEach { group ->
-                        val groupIds = group.rows.map { it.txn.id }
-                        val selectedInGroup = groupIds.count { it in selectedIds }
-                        val allGroupSelected =
-                            groupIds.isNotEmpty() && selectedInGroup == groupIds.size
-                        item(key = "h-${group.key}") {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(start = 16.dp, end = 8.dp, top = 14.dp, bottom = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .padding(end = 8.dp)
-                                        .width(10.dp)
-                                        .height(10.dp)
-                                        .clip(RoundedCornerShape(3.dp))
-                                        .background(parseHexColor(group.railColorHex)),
-                                )
-                                CategoryChip(model = group.chip)
+        // Pull down → same path as toolbar refresh (R2Finance latest).
+        PullToRefreshBox(
+            isRefreshing = inboxRefreshing,
+            onRefresh = { refreshInbox() },
+            state = pullState,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+        ) {
+            when {
+                items.isNotEmpty() -> {
+                    // Always paint Room/cache first (tab switch, mid-delta, mid-refresh).
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(
+                            top = 8.dp,
+                            bottom = if (hasSelection) 8.dp else 24.dp,
+                        ),
+                    ) {
+                        banner?.let { msg ->
+                            item {
                                 Text(
-                                    "${group.rows.size}",
-                                    style = MaterialTheme.typography.labelMedium,
+                                    msg,
+                                    style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(start = 8.dp),
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                                 )
-                                Spacer(Modifier.weight(1f))
-                                TextButton(onClick = { toggleGroup(groupIds) }) {
-                                    Text(if (allGroupSelected) "Deselect" else "Select")
-                                }
                             }
                         }
-                        itemsIndexed(
-                            group.rows,
-                            key = { _, row -> row.txn.id },
-                        ) { idx, row ->
-                            InboxTxnRow(
-                                row = row,
-                                selected = row.txn.id in selectedIds,
-                                railColorHex = group.railColorHex,
-                                isGroupFirst = idx == 0,
-                                isGroupLast = idx == group.rows.lastIndex,
-                                onToggleSelect = {
-                                    selectedIds =
-                                        if (row.txn.id in selectedIds) {
-                                            selectedIds - row.txn.id
-                                        } else {
-                                            selectedIds + row.txn.id
-                                        }
-                                },
-                                onOpenDetail = { detailTarget = row },
-                            )
+                        categoryGroups.forEach { group ->
+                            val groupIds = group.rows.map { it.txn.id }
+                            val selectedInGroup = groupIds.count { it in selectedIds }
+                            val allGroupSelected =
+                                groupIds.isNotEmpty() && selectedInGroup == groupIds.size
+                            item(key = "h-${group.key}") {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = 16.dp, end = 8.dp, top = 14.dp, bottom = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .padding(end = 8.dp)
+                                            .width(10.dp)
+                                            .height(10.dp)
+                                            .clip(RoundedCornerShape(3.dp))
+                                            .background(parseHexColor(group.railColorHex)),
+                                    )
+                                    CategoryChip(model = group.chip)
+                                    Text(
+                                        "${group.rows.size}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(start = 8.dp),
+                                    )
+                                    Spacer(Modifier.weight(1f))
+                                    TextButton(onClick = { toggleGroup(groupIds) }) {
+                                        Text(if (allGroupSelected) "Deselect" else "Select")
+                                    }
+                                }
+                            }
+                            itemsIndexed(
+                                group.rows,
+                                key = { _, row -> row.txn.id },
+                            ) { idx, row ->
+                                InboxTxnRow(
+                                    row = row,
+                                    selected = row.txn.id in selectedIds,
+                                    railColorHex = group.railColorHex,
+                                    isGroupFirst = idx == 0,
+                                    isGroupLast = idx == group.rows.lastIndex,
+                                    onToggleSelect = {
+                                        selectedIds =
+                                            if (row.txn.id in selectedIds) {
+                                                selectedIds - row.txn.id
+                                            } else {
+                                                selectedIds + row.txn.id
+                                            }
+                                    },
+                                    onOpenDetail = { detailTarget = row },
+                                )
+                            }
                         }
                     }
                 }
-            }
-            !inboxReady || (inboxRefreshing && items.isEmpty()) -> {
-                // First Room emit not yet (or empty + manual refresh). Never
-                // gate on background isSyncing — that caused tab-switch spinner.
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding)
-                        .padding(24.dp),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    CircularProgressIndicator()
-                    Text(
-                        banner ?: "Loading from this phone…",
-                        modifier = Modifier.padding(top = 16.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-            }
-            else -> {
-                // inboxReady && items empty (background sync may still be running)
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding)
-                        .padding(24.dp),
-                    verticalArrangement = Arrangement.Center,
-                ) {
-                    Text(
-                        text = stringResource(R.string.empty_inbox),
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    Text(
-                        stringResource(R.string.inbox_empty_hint),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
-                    banner?.let {
+                !inboxReady -> {
+                    // First Room emit only — pull-to-refresh never blanks a ready empty list.
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        CircularProgressIndicator()
                         Text(
-                            it,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(top = 8.dp),
+                            banner ?: "Loading from this phone…",
+                            modifier = Modifier.padding(top = 16.dp),
+                            style = MaterialTheme.typography.bodyMedium,
                         )
                     }
-                    TextButton(onClick = { refreshInbox() }) {
-                        Text("Sync")
+                }
+                else -> {
+                    // Ready + empty — still pullable for "get latest from R2Finance".
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp),
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Text(
+                            text = stringResource(R.string.empty_inbox),
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                        Text(
+                            stringResource(R.string.inbox_empty_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                        Text(
+                            "Pull down to refresh from R2Finance",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 12.dp),
+                        )
+                        banner?.let {
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(top = 8.dp),
+                            )
+                        }
+                        TextButton(onClick = { refreshInbox() }) {
+                            Text("Sync")
+                        }
                     }
                 }
             }
