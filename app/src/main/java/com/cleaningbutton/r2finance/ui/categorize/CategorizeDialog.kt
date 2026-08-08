@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -19,7 +18,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -36,7 +34,11 @@ import kotlinx.coroutines.launch
 
 /**
  * Category picker for one or many transactions (bulk).
- * Offline-first Room write (PENDING_PUSH). ConnectivityMonitor flushes later.
+ *
+ * Optimistic UX: dialog closes as soon as you tap a category. Room write +
+ * cloud push run on [AppContainer.applicationScope] so work continues after
+ * dismiss. Offline edits stay PENDING_PUSH; [ConnectivityMonitor] flushes
+ * when the phone comes back online.
  */
 @Composable
 fun CategorizeDialog(
@@ -46,12 +48,9 @@ fun CategorizeDialog(
     onDismiss: () -> Unit,
     onDone: (message: String?) -> Unit = {},
 ) {
-    val scope = rememberCoroutineScope()
     var categories by remember { mutableStateOf<List<CategoryEntity>>(emptyList()) }
     var groupNames by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var query by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
 
     val single = targets.singleOrNull()
     val bulk = targets.size > 1
@@ -75,8 +74,34 @@ fun CategorizeDialog(
             .sortedBy { (gid, _) -> groupNames[gid] ?: "" }
     }
 
+    fun pickCategory(cat: CategoryEntity) {
+        val ids = targets.map { it.txn.id }
+        val offline = !container.connectivityMonitor.online.value
+        // Close immediately — process in background so the next item is free.
+        onDone(
+            when {
+                bulk && offline ->
+                    "Categorized ${ids.size} · ${cat.name} · offline, uploads later"
+                bulk ->
+                    "Categorized ${ids.size} · ${cat.name}"
+                offline ->
+                    "Categorized · ${cat.name} · offline, uploads later"
+                else ->
+                    "Categorized · ${cat.name}"
+            },
+        )
+        onDismiss()
+        // Survive dialog dispose: process-scoped scope, not composition scope.
+        container.applicationScope.launch {
+            runCatching { container.ledger.setCategoryMany(ids, cat.id) }
+            if (container.connectivityMonitor.online.value) {
+                runCatching { container.syncCoordinator.syncWhenOnline(planId) }
+            }
+        }
+    }
+
     AlertDialog(
-        onDismissRequest = { if (!busy) onDismiss() },
+        onDismissRequest = onDismiss,
         title = {
             Text(
                 when {
@@ -115,18 +140,8 @@ fun CategorizeDialog(
                     label = { Text("Search categories") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    enabled = !busy,
                 )
-                error?.let {
-                    Text(it, color = MaterialTheme.colorScheme.error)
-                }
-                if (busy) {
-                    CircularProgressIndicator(
-                        modifier = Modifier
-                            .align(Alignment.CenterHorizontally)
-                            .padding(12.dp),
-                    )
-                } else if (categories.isEmpty()) {
+                if (categories.isEmpty()) {
                     Text(
                         "No categories yet. Sync from cloud so YNAB categories " +
                             "appear in R2Finance.",
@@ -150,36 +165,7 @@ fun CategorizeDialog(
                                 val gName = groupNames[cat.categoryGroupId]
                                 TextButton(
                                     modifier = Modifier.fillMaxWidth(),
-                                    enabled = !busy,
-                                    onClick = {
-                                        scope.launch {
-                                            busy = true
-                                            error = null
-                                            val ids = targets.map { it.txn.id }
-                                            container.ledger.setCategoryMany(ids, cat.id)
-                                            if (container.connectivityMonitor.online.value) {
-                                                runCatching {
-                                                    container.syncCoordinator.syncWhenOnline(planId)
-                                                }
-                                            }
-                                            busy = false
-                                            val offline =
-                                                !container.connectivityMonitor.online.value
-                                            onDone(
-                                                when {
-                                                    bulk && offline ->
-                                                        "Categorized ${ids.size} · ${cat.name} · offline"
-                                                    bulk ->
-                                                        "Categorized ${ids.size} · ${cat.name}"
-                                                    offline ->
-                                                        "Categorized · ${cat.name} · offline, uploads later"
-                                                    else ->
-                                                        "Categorized · ${cat.name}"
-                                                },
-                                            )
-                                            onDismiss()
-                                        }
-                                    },
+                                    onClick = { pickCategory(cat) },
                                 ) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -198,7 +184,7 @@ fun CategorizeDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss, enabled = !busy) { Text("Close") }
+            TextButton(onClick = onDismiss) { Text("Close") }
         },
     )
 }
