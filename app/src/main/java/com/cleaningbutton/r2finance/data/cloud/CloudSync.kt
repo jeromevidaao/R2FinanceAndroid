@@ -38,16 +38,20 @@ class CloudSync(
     private val api: CloudApi = CloudApi(),
 ) {
     /**
-     * Optional YNAB tick on the server, then pull DDB → Room (delta or full).
+     * Optional server bridge tick (YNAB↔DDB on AWS only), then pull **DDB → Room**.
+     * This app never talks to YNAB — only R2FinanceAPI.
+     *
+     * @param requestServerTick when true, POST /v1/sync/tick so Lambda refreshes
+     *   DDB from the backend bridge before we pull. Still no YNAB credentials on device.
      */
     suspend fun syncFromCloud(
-        pullYnab: Boolean = true,
+        requestServerTick: Boolean = true,
         since: Long = 0L,
         forceFull: Boolean = false,
         onProgress: (String) -> Unit = {},
     ): CloudSyncReport = withContext(Dispatchers.IO) {
-        if (pullYnab) {
-            onProgress("Syncing with YNAB…")
+        if (requestServerTick) {
+            onProgress("Updating cloud ledger…")
             runCatching { api.syncTick() }
                 .onFailure { /* still hydrate from last DDB snapshot */ }
         }
@@ -297,11 +301,11 @@ class CloudSync(
         pullChanges(since = 0L, forceFull = true, onProgress = onProgress)
 
     /**
-     * Fast path for Inbox tab: YNAB tick + accounts/categories + inbox rows only.
+     * Fast path for Inbox tab: optional server tick, then accounts/categories + inbox from API/DDB.
      */
     suspend fun pullInbox(onProgress: (String) -> Unit = {}): CloudSyncReport =
         withContext(Dispatchers.IO) {
-            onProgress("Syncing with YNAB…")
+            onProgress("Updating cloud ledger…")
             runCatching { api.syncTick() }
             val now = System.currentTimeMillis()
             val planId = "default"
@@ -418,7 +422,8 @@ class CloudSync(
 
     /**
      * Push local Room PENDING_PUSH payees + transactions into DynamoDB.
-     * Marks them SYNCED on the phone once DDB accepts (YNAB may still be pending server-side).
+     * Marks them SYNCED on the phone once DDB accepts
+     * (backend bridge may still push to YNAB later — not this app’s job).
      */
     suspend fun pushLocalPending(
         planId: String = "default",

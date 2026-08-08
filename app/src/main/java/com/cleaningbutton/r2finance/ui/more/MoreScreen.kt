@@ -60,9 +60,10 @@ fun MoreScreen(container: AppContainer) {
             Text(
                 "Offline-first: all work is on this phone (Room). While flying / offline, " +
                     "add, categorize, and approve as usual — changes queue as PENDING_PUSH. " +
-                    "When network returns they upload to DynamoDB automatically; YNAB is " +
-                    "updated later by the AWS backend (≈15 min tick), not by the phone. " +
-                    "Manual Accounts → Sync also push+pull (+ optional YNAB tick).",
+                    "When network returns they upload to R2Finance (DynamoDB) automatically. " +
+                    "This app never talks to YNAB — only R2FinanceAPI. The AWS stack can " +
+                    "mirror DDB ↔ YNAB on a schedule; the phone only push/pulls cloud. " +
+                    "Manual Sync = upload pending + refresh from R2Finance.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -122,8 +123,8 @@ fun MoreScreen(container: AppContainer) {
             ) { Text("Check for updates") }
 
             Text(
-                "Local Room ledger · cloud sync via R2FinanceAPI (DDB). " +
-                    "No YNAB API in this app.",
+                "Local Room ledger · sync only with R2FinanceAPI + DynamoDB. " +
+                    "Never calls YNAB from this device.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

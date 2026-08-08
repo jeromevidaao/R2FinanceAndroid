@@ -522,7 +522,10 @@ class CloudApi(
     suspend fun getInbox(): CloudInboxResponse =
         get("/v1/inbox", CloudInboxResponse.serializer())
 
-    /** Pull YNAB → DDB then push pending DDB → YNAB. */
+    /**
+     * Ask AWS to run the backend ledger bridge (DDB ↔ external sources).
+     * Device never holds YNAB credentials; this is still only R2FinanceAPI.
+     */
     suspend fun syncTick(): CloudSyncTickResponse =
         post("/v1/sync/tick", "{}", CloudSyncTickResponse.serializer())
 
@@ -548,8 +551,8 @@ class CloudApi(
     }
 
     /**
-     * Land phone Room PENDING_PUSH rows into DynamoDB.
-     * Does **not** wait for YNAB — backend tick/schedule pushes later.
+     * Land phone Room PENDING_PUSH rows into DynamoDB via R2FinanceAPI.
+     * Backend may mirror to other systems later — not the phone’s concern.
      */
     suspend fun devicePush(request: DevicePushRequest): DevicePushResponse {
         val payload = json.encodeToString(DevicePushRequest.serializer(), request)

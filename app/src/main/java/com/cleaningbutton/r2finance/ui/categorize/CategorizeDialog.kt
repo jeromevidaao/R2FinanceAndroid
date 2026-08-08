@@ -165,8 +165,8 @@ fun CategorizeDialog(
                 )
                 if (categories.isEmpty()) {
                     Text(
-                        "No categories yet. Sync from cloud so YNAB categories " +
-                            "appear in R2Finance.",
+                        "No categories yet. Sync with R2Finance so categories " +
+                            "from the cloud ledger appear here.",
                     )
                 } else {
                     LazyColumn(

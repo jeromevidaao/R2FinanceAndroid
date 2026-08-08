@@ -362,8 +362,9 @@ fun AccountsScreen(
                                 Text(
                                     text = "Link BoA, Chase, Vanguard, or Venmo on the website " +
                                         "(Connectors). This tab shows available balances from " +
-                                        "the connector cache — not the YNAB ledger. Plaid is " +
-                                        "only for transaction match and balance refresh.",
+                                        "the connector cache — not the R2Finance ledger. " +
+                                        "Plaid is for match + balance refresh; the app only " +
+                                        "talks to R2FinanceAPI.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     modifier = Modifier.padding(top = 8.dp),
                                 )

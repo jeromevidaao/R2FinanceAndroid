@@ -16,7 +16,8 @@ import kotlinx.coroutines.sync.withLock
  * 2. Local edits → syncStatus = PENDING_PUSH
  * 3. When network returns → push PENDING_PUSH → DynamoDB
  * 4. Then **delta** pull DDB → Room (full only on empty DB or periodic heal)
- * 5. YNAB sync is **backend-only** (EventBridge ~15m or optional tick) — not required for phone ops
+ * 5. **YNAB never on device.** Any YNAB↔DDB bridge runs only in AWS
+ *    (EventBridge ~15m or optional POST /v1/sync/tick). Phone only talks to R2FinanceAPI.
  *
  * Day-to-day HTTP stays light: [KEY_SYNC_CURSOR] drives GET /v1/sync/changes?since=…
  * Silent full resync every [FULL_SYNC_INTERVAL_MS] avoids long-term drift.
@@ -65,7 +66,7 @@ class SyncCoordinator(
             if (!_hasLocalData.value) {
                 return@withLock doPullLocked(
                     planId = planId,
-                    pullYnab = false,
+                    requestServerTick = false,
                     forceFull = true,
                     showBusy = true,
                 )
@@ -73,7 +74,7 @@ class SyncCoordinator(
             // Already have data — push offline work + delta (or silent full if due).
             doPushThenPullLocked(
                 planId = planId,
-                pullYnab = false,
+                requestServerTick = false,
                 forceFull = shouldFullSync(),
                 showBusy = false,
             )
@@ -89,14 +90,14 @@ class SyncCoordinator(
             if (!_hasLocalData.value) {
                 return@withLock doPullLocked(
                     planId = planId,
-                    pullYnab = false,
+                    requestServerTick = false,
                     forceFull = true,
                     showBusy = true,
                 )
             }
             doPushThenPullLocked(
                 planId = planId,
-                pullYnab = false,
+                requestServerTick = false,
                 forceFull = shouldFullSync(),
                 showBusy = false,
             )
@@ -113,8 +114,9 @@ class SyncCoordinator(
         }
 
     /**
-     * Manual refresh (toolbar). Push pending, tick YNAB on server, pull delta
-     * (or full if forced / interval due).
+     * Manual refresh (toolbar). Push pending → R2FinanceAPI/DDB, optional
+     * server bridge tick (AWS only), then pull delta/full from cloud.
+     * Never contacts YNAB from the phone.
      */
     suspend fun refresh(
         planId: String = DEFAULT_PLAN_ID,
@@ -123,7 +125,7 @@ class SyncCoordinator(
         mutex.withLock {
             doPushThenPullLocked(
                 planId = planId,
-                pullYnab = true,
+                requestServerTick = true,
                 forceFull = forceFull || shouldFullSync(),
                 showBusy = true,
             ).map { it!! }
@@ -171,7 +173,7 @@ class SyncCoordinator(
 
     private suspend fun doPushThenPullLocked(
         planId: String,
-        pullYnab: Boolean,
+        requestServerTick: Boolean,
         forceFull: Boolean,
         showBusy: Boolean,
     ): Result<CloudSyncReport?> {
@@ -190,7 +192,7 @@ class SyncCoordinator(
             }
             doPullLocked(
                 planId = planId,
-                pullYnab = pullYnab,
+                requestServerTick = requestServerTick,
                 forceFull = forceFull,
                 showBusy = showBusy,
                 alreadyBusy = true,
@@ -205,7 +207,7 @@ class SyncCoordinator(
 
     private suspend fun doPullLocked(
         planId: String,
-        pullYnab: Boolean,
+        requestServerTick: Boolean,
         forceFull: Boolean,
         showBusy: Boolean,
         alreadyBusy: Boolean = false,
@@ -215,11 +217,11 @@ class SyncCoordinator(
             val since = if (forceFull) 0L else syncCursor()
             if (showBusy) {
                 _statusMessage.value =
-                    if (forceFull || since <= 0L) "Full sync from cloud…"
-                    else "Refreshing changes…"
+                    if (forceFull || since <= 0L) "Full sync from R2Finance…"
+                    else "Refreshing from R2Finance…"
             }
             val report = cloudSync.syncFromCloud(
-                pullYnab = pullYnab,
+                requestServerTick = requestServerTick,
                 since = since,
                 forceFull = forceFull || since <= 0L,
             ) { step ->
