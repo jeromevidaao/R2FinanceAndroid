@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.sp
 import com.cleaningbutton.r2finance.R
 import com.cleaningbutton.r2finance.data.repository.TransactionRow
 import com.cleaningbutton.r2finance.domain.CategoryColors
+import com.cleaningbutton.r2finance.domain.SisterPair
 import com.cleaningbutton.r2finance.domain.findSisterPairs
 import com.cleaningbutton.r2finance.domain.flattenSisterPairs
 
@@ -222,7 +223,7 @@ fun categoryChipForCategory(
     )
 }
 
-/** Stable group key for Spending list (same category together). */
+/** Stable group key for category-based inbox (legacy / tests). */
 fun inboxGroupKey(row: TransactionRow): String {
     val txn = row.txn
     if (txn.transferAccountId != null) return "__transfer:${txn.transferAccountId}"
@@ -250,6 +251,24 @@ data class InboxCategoryGroup(
     val pairCount: Int = 0,
 )
 
+/** One row inside a date group (per-txn category rail + optional sister flags). */
+data class InboxDateRow(
+    val row: TransactionRow,
+    val chip: CategoryChipModel,
+    val railColorHex: String,
+    val sisterPair: Boolean = false,
+    val sisterStart: Boolean = false,
+    val sisterEnd: Boolean = false,
+)
+
+/** Inbox section: one calendar day, newest first. */
+data class InboxDateGroup(
+    val key: String,
+    /** YYYY-MM-DD */
+    val date: String,
+    val items: List<InboxDateRow>,
+)
+
 private const val SISTERS_KEY = "__sisters"
 
 private fun sisterPairsChip(pairCount: Int): CategoryChipModel =
@@ -265,10 +284,74 @@ private fun sisterPairsChip(pairCount: Int): CategoryChipModel =
     )
 
 /**
- * Group inbox rows for bulk approve.
- * Order: Sister pairs (cancel out) → Category Needed → named categories (A–Z) → transfers.
- * Within each category group: newest date first.
- * Sister group: pairs listed consecutively (outflow then inflow).
+ * Group inbox rows by calendar date (newest first).
+ * Still merges sister pairs (transfer legs / equal-opposite amounts) and
+ * lists each pair consecutively under the later of the two dates.
+ * Category chip + rail colors stay per row (UI from category grouping).
+ */
+fun groupInboxByDate(rows: List<TransactionRow>): List<InboxDateGroup> {
+    val (pairs, unpaired) = findSisterPairs(rows)
+
+    data class Bucket(
+        val pairs: MutableList<SisterPair<TransactionRow>> = mutableListOf(),
+        val unpaired: MutableList<TransactionRow> = mutableListOf(),
+    )
+    val buckets = linkedMapOf<String, Bucket>()
+
+    fun bucket(date: String): Bucket {
+        val key = date.take(10).ifBlank { "unknown" }
+        return buckets.getOrPut(key) { Bucket() }
+    }
+
+    for (p in pairs) {
+        val d = maxOf(p.a.txn.date, p.b.txn.date)
+        bucket(d).pairs += p
+    }
+    for (t in unpaired) {
+        bucket(t.txn.date).unpaired += t
+    }
+
+    return buckets.keys.sortedDescending().map { date ->
+        val b = buckets.getValue(date)
+        val items = mutableListOf<InboxDateRow>()
+
+        for (p in b.pairs) {
+            listOf(
+                Triple(p.a, true, false),
+                Triple(p.b, false, true),
+            ).forEach { (row, start, end) ->
+                val chip = categoryChipForRow(row, row.categoryGroupName)
+                items += InboxDateRow(
+                    row = row,
+                    chip = chip,
+                    railColorHex = SISTER_COLOR,
+                    sisterPair = true,
+                    sisterStart = start,
+                    sisterEnd = end,
+                )
+            }
+        }
+
+        val sortedUnpaired = b.unpaired.sortedWith(
+            compareByDescending<TransactionRow> { kotlin.math.abs(it.txn.amountMilli) }
+                .thenBy { it.txn.ynabId ?: it.txn.id },
+        )
+        for (row in sortedUnpaired) {
+            val chip = categoryChipForRow(row, row.categoryGroupName)
+            items += InboxDateRow(
+                row = row,
+                chip = chip,
+                railColorHex = chip.railColorHex,
+            )
+        }
+
+        InboxDateGroup(key = date, date = date, items = items)
+    }
+}
+
+/**
+ * Legacy: group by category (Sister pairs → Needed → A–Z → transfers).
+ * Prefer [groupInboxByDate] for Categorization UI.
  */
 fun groupInboxByCategory(rows: List<TransactionRow>): List<InboxCategoryGroup> {
     val (pairs, unpaired) = findSisterPairs(rows)

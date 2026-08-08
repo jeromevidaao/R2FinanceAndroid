@@ -57,17 +57,18 @@ import com.cleaningbutton.r2finance.data.cloud.SyncCoordinator
 import com.cleaningbutton.r2finance.data.repository.TransactionRow
 import com.cleaningbutton.r2finance.domain.Money
 import com.cleaningbutton.r2finance.domain.RelativeDate
-import com.cleaningbutton.r2finance.domain.isSisterPairEnd
 import com.cleaningbutton.r2finance.ui.categorize.CategorizeDialog
 import com.cleaningbutton.r2finance.ui.category.CategoryChip
-import com.cleaningbutton.r2finance.ui.category.groupInboxByCategory
+import com.cleaningbutton.r2finance.ui.category.CategoryChipModel
+import com.cleaningbutton.r2finance.ui.category.groupInboxByDate
 import com.cleaningbutton.r2finance.ui.category.parseHexColor
 import kotlinx.coroutines.launch
 
 /**
  * Categorization list (needs-attention):
- * - unapproved + uncategorized, grouped by category for bulk approve
- * - vertical category color rail along each group
+ * - unapproved + uncategorized, grouped by date for bulk approve
+ * - per-row category color rail + chip (same UI as before, not cat-grouped)
+ * - sister pairs (transfers / offsetting) still merged consecutively
  * - multi-select → Approve / Categorize (local-first, silent background push)
  *
  * **Local-first / paint cache immediately:**
@@ -176,7 +177,7 @@ fun InboxScreen(container: AppContainer) {
     val selectedNet = remember(selectedRows) {
         selectedRows.sumOf { it.txn.amountMilli }
     }
-    val categoryGroups = remember(items) { groupInboxByCategory(items) }
+    val dateGroups = remember(items) { groupInboxByDate(items) }
 
     // Prefer any cached rows immediately. "All clear" only after Room is ready and empty.
     val busy = inboxRefreshing
@@ -281,8 +282,8 @@ fun InboxScreen(container: AppContainer) {
                                 )
                             }
                         }
-                        categoryGroups.forEach { group ->
-                            val groupIds = group.rows.map { it.txn.id }
+                        dateGroups.forEach { group ->
+                            val groupIds = group.items.map { it.row.txn.id }
                             val selectedInGroup = groupIds.count { it in selectedIds }
                             val allGroupSelected =
                                 groupIds.isNotEmpty() && selectedInGroup == groupIds.size
@@ -293,17 +294,13 @@ fun InboxScreen(container: AppContainer) {
                                         .padding(start = 16.dp, end = 8.dp, top = 14.dp, bottom = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .padding(end = 8.dp)
-                                            .width(10.dp)
-                                            .height(10.dp)
-                                            .clip(RoundedCornerShape(3.dp))
-                                            .background(parseHexColor(group.railColorHex)),
-                                    )
-                                    CategoryChip(model = group.chip)
                                     Text(
-                                        "${group.rows.size}",
+                                        RelativeDate.formatFriendly(group.date),
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    Text(
+                                        "${group.items.size}",
                                         style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.padding(start = 8.dp),
@@ -315,17 +312,18 @@ fun InboxScreen(container: AppContainer) {
                                 }
                             }
                             itemsIndexed(
-                                group.rows,
-                                key = { _, row -> row.txn.id },
-                            ) { idx, row ->
+                                group.items,
+                                key = { _, item -> item.row.txn.id },
+                            ) { idx, item ->
+                                val row = item.row
                                 InboxTxnRow(
                                     row = row,
                                     selected = row.txn.id in selectedIds,
-                                    railColorHex = group.railColorHex,
+                                    railColorHex = item.railColorHex,
+                                    chip = item.chip,
                                     isGroupFirst = idx == 0,
-                                    isGroupLast = idx == group.rows.lastIndex,
-                                    showCancelsPair =
-                                        group.sisterPairs && isSisterPairEnd(idx),
+                                    isGroupLast = idx == group.items.lastIndex,
+                                    showCancelsPair = item.sisterEnd,
                                     onToggleSelect = {
                                         selectedIds =
                                             if (row.txn.id in selectedIds) {
@@ -433,6 +431,7 @@ private fun InboxTxnRow(
     row: TransactionRow,
     selected: Boolean,
     railColorHex: String,
+    chip: CategoryChipModel,
     isGroupFirst: Boolean,
     isGroupLast: Boolean,
     showCancelsPair: Boolean = false,
@@ -486,7 +485,7 @@ private fun InboxTxnRow(
             Box(
                 modifier = Modifier
                     .width(12.dp)
-                    .height(56.dp)
+                    .height(64.dp)
                     .padding(top = railTop, bottom = railBottom, end = 8.dp),
             ) {
                 Box(
@@ -509,14 +508,13 @@ private fun InboxTxnRow(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Row(
-                    modifier = Modifier.padding(top = 2.dp),
+                    modifier = Modifier.padding(top = 3.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
+                    CategoryChip(model = chip)
                     Text(
                         buildString {
-                            append(RelativeDate.formatFriendly(txn.date))
-                            append(" · ")
                             append(row.accountName ?: "Account")
                             append(" · ")
                             append(approvalStatusLabel(txn.approved))
