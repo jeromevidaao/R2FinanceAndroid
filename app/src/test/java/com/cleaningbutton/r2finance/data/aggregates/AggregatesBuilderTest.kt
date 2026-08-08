@@ -1,8 +1,11 @@
 package com.cleaningbutton.r2finance.data.aggregates
 
+import com.cleaningbutton.r2finance.data.local.entity.AccountEntity
+import com.cleaningbutton.r2finance.domain.AccountType
 import com.cleaningbutton.r2finance.domain.AnalyticsTxn
 import com.cleaningbutton.r2finance.domain.PeriodMode
 import com.cleaningbutton.r2finance.domain.PresetId
+import com.cleaningbutton.r2finance.domain.SyncStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -63,6 +66,29 @@ class AggregatesBuilderTest {
         val last3 = agg.presetReports[PresetId.LAST_3.key]!!
         // Current + prev + unapproved (transfer excluded): -10000+5000-500-2000 = -7500
         assertEquals(-7_500_00L, last3.outflowMilli)
+    }
+
+    @Test
+    fun home_prefers_cloud_account_balance_over_txn_sum() {
+        val acct =
+            AccountEntity(
+                id = "a1",
+                planId = "default",
+                name = "Checking",
+                type = AccountType.checking,
+                balanceMilli = 12_500_000L, // $12,500 from YNAB/cloud
+                syncStatus = SyncStatus.SYNCED,
+            )
+        val agg =
+            AggregatesBuilder.buildFromAnalytics(
+                planId = "default",
+                analyticsTxns = listOf(txn("2026-08-01", -1000)),
+                accounts = listOf(acct),
+                // Intentionally incomplete local ledger sum
+                rawTxns = emptyList(),
+            )
+        assertEquals(12_500_000L, agg.home.accountsTotal)
+        assertEquals(1, agg.home.openAccountCount)
     }
 
     @Test

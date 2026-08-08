@@ -81,7 +81,7 @@ fun HomeScreen(
                         "…"
                     },
                     hint = if (agg.ready) {
-                        "${home.openAccountCount} open"
+                        "${home.openAccountCount} open · YNAB balances"
                     } else if (home.openAccountCount > 0) {
                         "${home.openAccountCount} open"
                     } else {

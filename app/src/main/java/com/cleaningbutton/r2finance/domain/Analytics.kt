@@ -339,6 +339,7 @@ object Analytics {
         // Net spending activity (negative = spent). Refunds/returns are positive and
         // reduce this total — same as YNAB month category activity excl. RTA.
         var outflow = 0L
+        var counted = 0
         val byCat = mutableMapOf<String, Long>()
         val byGroup = mutableMapOf<String, Long>()
         val byPayee = mutableMapOf<String, Long>()
@@ -353,6 +354,10 @@ object Analytics {
             val hasSplits = t.splitLines.isNotEmpty()
             val nonTransferSubs =
                 if (hasSplits) t.splitLines.filter { it.transferAccountId == null } else emptyList()
+            val transferSubsOnly =
+                hasSplits &&
+                    t.splitLines.isNotEmpty() &&
+                    nonTransferSubs.isEmpty()
 
             data class Line(
                 val amountMilli: Long,
@@ -361,36 +366,53 @@ object Analytics {
                 val payeeId: String?,
             )
 
+            /**
+             * Split attribution:
+             * - Prefer non-transfer split legs (real spend / refund).
+             * - If every split leg is a transfer, attribute **nothing** (do not fall
+             *   back to the parent amount — that double-counted transfers as spend
+             *   and broke Reflect totals).
+             * - If non-transfer legs exist but are all $0 (incomplete Room rows),
+             *   fall back to the parent amount so we do not zero real spend.
+             * - No splits → parent line.
+             */
             val lines: List<Line> =
-                if (hasSplits && nonTransferSubs.any { it.amountMilli != 0L }) {
-                    nonTransferSubs.map {
-                        Line(
-                            amountMilli = it.amountMilli,
-                            categoryId = it.categoryId,
-                            categoryGroupId = it.categoryGroupId,
-                            payeeId = it.payeeId,
+                when {
+                    transferSubsOnly -> emptyList()
+                    hasSplits && nonTransferSubs.any { it.amountMilli != 0L } ->
+                        nonTransferSubs.map {
+                            Line(
+                                amountMilli = it.amountMilli,
+                                categoryId = it.categoryId,
+                                categoryGroupId = it.categoryGroupId,
+                                payeeId = it.payeeId,
+                            )
+                        }
+                    hasSplits &&
+                        nonTransferSubs.isNotEmpty() &&
+                        nonTransferSubs.all { it.amountMilli == 0L } ->
+                        listOf(
+                            Line(
+                                amountMilli = t.amountMilli,
+                                categoryId = t.categoryId,
+                                categoryGroupId = t.categoryGroupId,
+                                payeeId = t.payeeId,
+                            ),
                         )
-                    }
-                } else if (hasSplits && nonTransferSubs.all { it.amountMilli == 0L }) {
-                    // Defensive: incomplete split rows in Room must not zero a real parent.
-                    listOf(
-                        Line(
-                            amountMilli = t.amountMilli,
-                            categoryId = t.categoryId,
-                            categoryGroupId = t.categoryGroupId,
-                            payeeId = t.payeeId,
-                        ),
-                    )
-                } else {
-                    listOf(
-                        Line(
-                            amountMilli = t.amountMilli,
-                            categoryId = t.categoryId,
-                            categoryGroupId = t.categoryGroupId,
-                            payeeId = t.payeeId,
-                        ),
-                    )
+                    else ->
+                        listOf(
+                            Line(
+                                amountMilli = t.amountMilli,
+                                categoryId = t.categoryId,
+                                categoryGroupId = t.categoryGroupId,
+                                payeeId = t.payeeId,
+                            ),
+                        )
                 }
+            // Parent was in periodTxns (not a top-level transfer). If it only
+            // had transfer split legs, skip buckets entirely.
+            if (lines.isEmpty()) continue
+            counted += 1
 
             var txnIn = 0L
             var txnSpendNet = 0L
@@ -474,7 +496,7 @@ object Analytics {
             mode = mode,
             periodKey = periodKey,
             periodLabel = bounds.label,
-            count = periodTxns.size,
+            count = counted,
             inflowMilli = inflow,
             outflowMilli = outflow,
             netMilli = inflow + outflow,

@@ -138,6 +138,17 @@ class LedgerAggregatesStore(
                             _state.value = built
                         }
                 }
+            // Surface Flow failures (Room schema drift, etc.) instead of
+            // leaving Home/Reflect stuck on computing forever.
+            collectJob?.invokeOnCompletion { err ->
+                if (err != null && err !is kotlinx.coroutines.CancellationException) {
+                    _state.value =
+                        _state.value.copy(
+                            computing = false,
+                            ready = _state.value.ready,
+                        )
+                }
+            }
         }
     }
 
@@ -307,23 +318,27 @@ object AggregatesBuilder {
             }
         val insight = Analytics.incomeVsSpendingInsight(incomeTrend)
 
-        // Account balances — single pass over transactions (no N Room SUM flows).
-        val bal = HashMap<String, Long>()
+        // Working balances: prefer authoritative cloud/YNAB balance on the account
+        // row (same source as the website Home total). Fall back to summing Room
+        // transactions when balance has never been synced (pre-migration / offline).
+        val balFromTxns = HashMap<String, Long>()
         val clearedBal = HashMap<String, Long>()
         for (t in snap.transactions) {
-            bal[t.accountId] = (bal[t.accountId] ?: 0L) + t.amountMilli
+            balFromTxns[t.accountId] = (balFromTxns[t.accountId] ?: 0L) + t.amountMilli
             if (t.cleared == ClearedStatus.cleared || t.cleared == ClearedStatus.reconciled) {
                 clearedBal[t.accountId] = (clearedBal[t.accountId] ?: 0L) + t.amountMilli
             }
         }
         val accountsWithBal =
             snap.accounts
-                .filter { !it.closed }
+                .filter { !it.closed && !it.deleted }
                 .sortedBy { it.name.lowercase() }
                 .map { acct ->
+                    val fromCloud = acct.balanceMilli
+                    val fromTxns = balFromTxns[acct.id] ?: 0L
                     AccountWithBalance(
                         account = acct,
-                        balanceMilli = bal[acct.id] ?: 0L,
+                        balanceMilli = fromCloud ?: fromTxns,
                         clearedBalanceMilli = clearedBal[acct.id] ?: 0L,
                     )
                 }
@@ -428,19 +443,19 @@ object AggregatesBuilder {
                 )
             }
 
-        val bal = HashMap<String, Long>()
+        val balFromTxns = HashMap<String, Long>()
         val clearedBal = HashMap<String, Long>()
         for (t in rawTxns) {
-            bal[t.accountId] = (bal[t.accountId] ?: 0L) + t.amountMilli
+            balFromTxns[t.accountId] = (balFromTxns[t.accountId] ?: 0L) + t.amountMilli
             if (t.cleared == ClearedStatus.cleared || t.cleared == ClearedStatus.reconciled) {
                 clearedBal[t.accountId] = (clearedBal[t.accountId] ?: 0L) + t.amountMilli
             }
         }
         val accountsWithBal =
-            accounts.filter { !it.closed }.map { acct ->
+            accounts.filter { !it.closed && !it.deleted }.map { acct ->
                 AccountWithBalance(
                     account = acct,
-                    balanceMilli = bal[acct.id] ?: 0L,
+                    balanceMilli = acct.balanceMilli ?: balFromTxns[acct.id] ?: 0L,
                     clearedBalanceMilli = clearedBal[acct.id] ?: 0L,
                 )
             }

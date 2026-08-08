@@ -58,7 +58,7 @@ class Converters {
         SubTransactionEntity::class,
         ScheduledTransactionEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -92,13 +92,23 @@ abstract class R2FinanceDatabase : RoomDatabase() {
                 }
             }
 
+        private val MIGRATION_3_4 =
+            object : Migration(3, 4) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    // YNAB working balance (milliunits); null until next cloud account upsert.
+                    db.execSQL("ALTER TABLE accounts ADD COLUMN balanceMilli INTEGER")
+                }
+            }
+
         fun get(context: Context): R2FinanceDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext,
                     R2FinanceDatabase::class.java,
                     "r2finance.db",
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .build()
+                    .also { instance = it }
             }
     }
 }

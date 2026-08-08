@@ -40,6 +40,9 @@ interface AccountDao {
     @Query("SELECT * FROM accounts WHERE planId = :planId AND deleted = 0 AND closed = 0 ORDER BY name")
     fun observeOpenAccounts(planId: String): Flow<List<AccountEntity>>
 
+    @Query("SELECT * FROM accounts WHERE planId = :planId AND deleted = 0 AND closed = 0 ORDER BY name")
+    suspend fun listOpen(planId: String): List<AccountEntity>
+
     @Query(
         """
         SELECT COUNT(*) FROM accounts
@@ -47,6 +50,16 @@ interface AccountDao {
         """,
     )
     suspend fun countOpen(planId: String): Int
+
+    /** True when any open account still lacks a cloud/YNAB working balance. */
+    @Query(
+        """
+        SELECT COUNT(*) FROM accounts
+        WHERE planId = :planId AND deleted = 0 AND closed = 0
+          AND balanceMilli IS NULL
+        """,
+    )
+    suspend fun countOpenMissingBalance(planId: String): Int
 
     @Query("SELECT * FROM accounts WHERE id = :id LIMIT 1")
     suspend fun getById(id: String): AccountEntity?

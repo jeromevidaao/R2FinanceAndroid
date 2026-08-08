@@ -49,6 +49,13 @@ data class AccountEntity(
     val transferPayeeId: String? = null,
     val lastReconciledAt: Long? = null,
     val ynabId: String? = null,
+    /**
+     * Authoritative working balance from R2FinanceAPI/YNAB (milliunits).
+     * Prefer this for Home / account totals — summing Room txs drifts when
+     * the local ledger is partial, mid-sync, or missing older history.
+     * Null until the first successful cloud account upsert.
+     */
+    val balanceMilli: Long? = null,
     val updatedAt: Long = System.currentTimeMillis(),
     val syncStatus: SyncStatus = SyncStatus.LOCAL_ONLY,
     val deleted: Boolean = false,

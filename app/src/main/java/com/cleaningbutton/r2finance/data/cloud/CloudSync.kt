@@ -117,6 +117,8 @@ class CloudSync(
                         note = a.note,
                         transferPayeeId = a.transferPayeeId,
                         ynabId = a.ynabId,
+                        // Authoritative YNAB working balance for Home totals.
+                        balanceMilli = a.balance,
                         updatedAt = when {
                             isFull -> syncStart
                             a.updatedAt > 0 -> a.updatedAt
@@ -131,6 +133,9 @@ class CloudSync(
         if (isFull) {
             db.accountDao().softDeleteSyncedOlderThan(planId, syncStart, now)
         }
+        // Sparse deltas often omit unchanged accounts — still need YNAB balances
+        // for Home after migration or if the pack had no account rows.
+        ensureAccountBalances(planId, now)
 
         onProgress("Categories…")
         if (pack.groups.isNotEmpty() || pack.categories.isNotEmpty()) {
@@ -338,6 +343,7 @@ class CloudSync(
                         note = a.note,
                         transferPayeeId = a.transferPayeeId,
                         ynabId = a.ynabId,
+                        balanceMilli = a.balance,
                         updatedAt = now,
                         syncStatus = SyncStatus.SYNCED,
                     )
@@ -548,6 +554,38 @@ class CloudSync(
             "reconciled" -> ClearedStatus.reconciled
             else -> ClearedStatus.uncleared
         }
+
+    /**
+     * Fill [AccountEntity.balanceMilli] from GET /v1/accounts when any open
+     * account is missing a working balance (first run after schema migration,
+     * or delta packs that omitted accounts).
+     */
+    private suspend fun ensureAccountBalances(planId: String, now: Long) {
+        val missing = runCatching {
+            db.accountDao().countOpenMissingBalance(planId)
+        }.getOrDefault(0)
+        if (missing <= 0) return
+        val accounts = runCatching { api.getAccounts() }.getOrNull() ?: return
+        if (accounts.isEmpty()) return
+        db.accountDao().upsertAll(
+            accounts.map { a ->
+                AccountEntity(
+                    id = a.ynabId,
+                    planId = planId,
+                    name = a.name,
+                    type = parseAccountType(a.type),
+                    onBudget = a.onBudget,
+                    closed = a.closed,
+                    note = a.note,
+                    transferPayeeId = a.transferPayeeId,
+                    ynabId = a.ynabId,
+                    balanceMilli = a.balance,
+                    updatedAt = now,
+                    syncStatus = SyncStatus.SYNCED,
+                )
+            },
+        )
+    }
 
     private fun parseFlag(raw: String?): FlagColor =
         when (raw?.lowercase()) {

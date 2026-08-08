@@ -102,6 +102,46 @@ class AnalyticsTest {
     }
 
     @Test
+    fun split_all_transfer_legs_do_not_count_parent_as_spend() {
+        // Parent has no transferAccountId but every split leg is a transfer.
+        // Falling back to parent amount used to inflate Reflect Total spending.
+        val txns =
+            listOf(
+                AnalyticsTxn(
+                    date = "2026-08-01",
+                    amountMilli = -239_350L,
+                    categoryId = null,
+                    accountId = "checking",
+                    transferAccountId = null,
+                    approved = true,
+                    splitLines =
+                        listOf(
+                            AnalyticsSplitLine(
+                                amountMilli = -239_350L,
+                                transferAccountId = "cc",
+                            ),
+                        ),
+                ),
+                AnalyticsTxn(
+                    date = "2026-08-01",
+                    amountMilli = -5_000L,
+                    categoryId = "food",
+                    accountId = "checking",
+                    approved = true,
+                ),
+            )
+        val report =
+            Analytics.buildSpendingReport(
+                transactions = txns,
+                mode = PeriodMode.MONTH,
+                periodKey = "2026-08",
+                categoryNames = mapOf("food" to "Food"),
+            )
+        assertEquals(-5_000L, report.outflowMilli)
+        assertEquals(1, report.count) // transfer-split parent skipped from spend
+    }
+
+    @Test
     fun listMonths_sortedDesc() {
         val months =
             Analytics.listMonths(
