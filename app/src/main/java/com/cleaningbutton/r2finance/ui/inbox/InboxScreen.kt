@@ -65,6 +65,11 @@ import kotlinx.coroutines.launch
  * - unapproved + uncategorized, grouped by category for bulk approve
  * - vertical category color rail along each group
  * - multi-select → Approve / Categorize (local-first, silent background push)
+ *
+ * **Local-first:** list comes from process-scoped [AppContainer.inboxCache] (Room),
+ * so tab switches never flash empty while waiting on HTTP. Background work is
+ * delta-only via [SyncCoordinator.ensureHydrated]; full inbox API heal is manual
+ * refresh only.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,26 +84,19 @@ fun InboxScreen(container: AppContainer) {
 
     val sync = container.syncCoordinator
     val hydrating by sync.isSyncing.collectAsStateWithLifecycle()
+    val items by container.inboxCache.rows.collectAsStateWithLifecycle()
+    val inboxReady by container.inboxCache.ready.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
-        planId = container.ledger.ensureDefaultPlan().id
-        sync.ensureHydrated(planId)
-        // Heal Categorization count vs YNAB: lightweight inbox-only pull so
-        // missing unapproved (never re-sent by delta) land in Room.
+        val plan = container.ledger.ensureDefaultPlan()
+        planId = plan.id
+        // Paint Room immediately (cache survives tab dispose/recreate).
+        container.inboxCache.start(plan.id)
+        // Silent background delta only — never blank the list; no pullInbox on enter.
         if (container.connectivityMonitor.online.value) {
-            runCatching {
-                container.cloudSync.pullInbox { step -> refreshMessage = step }
-            }.onSuccess { report ->
-                if (report.inboxCount > 0) {
-                    refreshMessage = null
-                }
-            }
+            runCatching { sync.ensureHydrated(plan.id) }
         }
     }
-
-    val items by remember(planId) {
-        container.ledger.observeInboxRows(planId)
-    }.collectAsStateWithLifecycle(initialValue = emptyList())
 
     LaunchedEffect(items) {
         val live = items.map { it.txn.id }.toSet()
@@ -112,6 +110,7 @@ fun InboxScreen(container: AppContainer) {
         scope.launch {
             inboxRefreshing = true
             refreshMessage = "Refreshing…"
+            // Manual only: inbox heal + optional delta. UI keeps showing Room cache.
             runCatching {
                 container.cloudSync.pullInbox { step -> refreshMessage = step }
             }.onSuccess { report ->
@@ -120,6 +119,7 @@ fun InboxScreen(container: AppContainer) {
             }.onFailure {
                 refreshMessage = "Sync failed: ${it.message}"
             }
+            runCatching { sync.ensureHydrated(planId) }
             inboxRefreshing = false
         }
     }
@@ -160,9 +160,7 @@ fun InboxScreen(container: AppContainer) {
     }
     val categoryGroups = remember(items) { groupInboxByCategory(items) }
 
-    // Only manual refresh blocks the empty state. Background silent push must not
-    // flip isSyncing / blank the list after categorize.
-    val showInitialLoad = (inboxRefreshing || hydrating) && items.isEmpty()
+    // Prefer any cached rows immediately. "All clear" only after Room is ready and empty.
     val busy = inboxRefreshing
     val banner = refreshMessage
     val hasSelection = selectedIds.isNotEmpty()
@@ -175,10 +173,10 @@ fun InboxScreen(container: AppContainer) {
                         Text(
                             if (hasSelection) {
                                 "${selectedIds.size} selected"
-                            } else if (items.isEmpty()) {
-                                stringResource(R.string.nav_inbox)
-                            } else {
+                            } else if (items.isNotEmpty()) {
                                 stringResource(R.string.inbox_title_with_count, items.size)
+                            } else {
+                                stringResource(R.string.nav_inbox)
                             },
                         )
                         if (hasSelection) {
@@ -237,54 +235,8 @@ fun InboxScreen(container: AppContainer) {
         },
     ) { padding ->
         when {
-            showInitialLoad -> {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding)
-                        .padding(24.dp),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    CircularProgressIndicator()
-                    Text(
-                        banner ?: "Loading…",
-                        modifier = Modifier.padding(top = 16.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-            }
-            items.isEmpty() -> {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding)
-                        .padding(24.dp),
-                    verticalArrangement = Arrangement.Center,
-                ) {
-                    Text(
-                        text = stringResource(R.string.empty_inbox),
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    Text(
-                        stringResource(R.string.inbox_empty_hint),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
-                    banner?.let {
-                        Text(
-                            it,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(top = 8.dp),
-                        )
-                    }
-                    TextButton(onClick = { refreshInbox() }) {
-                        Text("Sync")
-                    }
-                }
-            }
-            else -> {
+            items.isNotEmpty() -> {
+                // Always paint Room/cache first (tab switch, mid-delta, mid-refresh).
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
@@ -358,6 +310,55 @@ fun InboxScreen(container: AppContainer) {
                                 onOpenDetail = { detailTarget = row },
                             )
                         }
+                    }
+                }
+            }
+            !inboxReady || inboxRefreshing || hydrating -> {
+                // No cache yet — loading, never "All clear".
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                        .padding(24.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    CircularProgressIndicator()
+                    Text(
+                        banner ?: "Loading from this phone…",
+                        modifier = Modifier.padding(top = 16.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+            else -> {
+                // inboxReady && items empty && not busy
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                        .padding(24.dp),
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Text(
+                        text = stringResource(R.string.empty_inbox),
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Text(
+                        stringResource(R.string.inbox_empty_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                    banner?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    }
+                    TextButton(onClick = { refreshInbox() }) {
+                        Text("Sync")
                     }
                 }
             }

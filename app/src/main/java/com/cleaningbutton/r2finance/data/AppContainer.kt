@@ -60,6 +60,11 @@ class AppContainer(context: Context) {
         )
 
     /**
+     * Categorization list that survives bottom-nav remounts — always Room-first.
+     */
+    val inboxCache: InboxCache = InboxCache(ledger, applicationScope)
+
+    /**
      * Warm aggregates + hydrate flag as soon as the process starts so Home/Reflect
      * open with precomputed numbers instead of scanning the ledger on the UI thread.
      */
@@ -67,7 +72,9 @@ class AppContainer(context: Context) {
         applicationScope.launch {
             val plan = ledger.ensureDefaultPlan()
             aggregates.start(plan.id)
-            // Local Room first; cloud hydrate if empty (same as screens).
+            // Room Categorization list ready before first tab open (no empty flash).
+            inboxCache.start(plan.id)
+            // Local Room first; silent delta (or full only if empty).
             syncCoordinator.ensureHydrated(plan.id)
         }
     }
