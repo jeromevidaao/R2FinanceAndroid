@@ -14,7 +14,6 @@ import com.cleaningbutton.r2finance.domain.FlagColor
 import com.cleaningbutton.r2finance.domain.SyncStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.util.UUID
 
 data class CloudSyncReport(
     val planName: String,
@@ -206,6 +205,10 @@ class CloudSync(
 
         val entities = mutableListOf<TransactionEntity>()
         val subs = mutableListOf<SubTransactionEntity>()
+        // Every parent we apply from cloud: wipe local split legs first, then
+        // re-insert the server set (possibly empty). Prevents orphan transfer
+        // legs from zeroing Reflect Total spending.
+        val parentsForSubReplace = linkedSetOf<String>()
         var skippedPending = 0
         for (t in pack.transactions) {
             val stableId = t.stableId()
@@ -218,6 +221,7 @@ class CloudSync(
             }
             if (t.deleted) {
                 entities.add(toEntity(t, planId, now, deleted = true, forceUpdatedAt = null))
+                parentsForSubReplace.add(stableId)
                 continue
             }
             if (t.date.isBlank()) continue
@@ -231,10 +235,15 @@ class CloudSync(
                     forceUpdatedAt = if (isFull) syncStart else null,
                 ),
             )
+            parentsForSubReplace.add(stableId)
             for (s in t.subtransactions) {
+                // Prefer stable YNAB id so re-sync does not accumulate UUID rows.
+                val subId =
+                    s.ynabId?.takeIf { it.isNotBlank() }
+                        ?: "${stableId}#${s.amount}#${s.categoryId ?: ""}#${s.transferAccountId ?: ""}"
                 subs.add(
                     SubTransactionEntity(
-                        id = s.ynabId ?: UUID.randomUUID().toString(),
+                        id = subId,
                         transactionId = stableId,
                         amountMilli = s.amount,
                         payeeId = s.payeeId,
@@ -252,6 +261,10 @@ class CloudSync(
         }
         entities.chunked(200).forEach { chunk ->
             db.transactionDao().upsertAll(chunk)
+        }
+        // Always replace splits for applied parents (even when server sends none).
+        parentsForSubReplace.chunked(200).forEach { ids ->
+            db.transactionDao().deleteSubsForTransactions(ids)
         }
         if (subs.isNotEmpty()) {
             subs.chunked(200).forEach { chunk ->

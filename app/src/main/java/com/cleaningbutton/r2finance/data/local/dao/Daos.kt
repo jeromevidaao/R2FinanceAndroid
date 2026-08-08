@@ -365,9 +365,19 @@ interface TransactionDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSubs(subs: List<SubTransactionEntity>)
 
+    /**
+     * Replace-split helper: cloud is source of truth for a parent's legs.
+     * Must run before re-inserting server subtransactions — otherwise orphan
+     * transfer-only legs (from older syncs / UUID regeneration) stay in Room
+     * and Analytics skips the parent as pure-transfer, undercounting Reflect.
+     */
+    @Query("DELETE FROM subtransactions WHERE transactionId IN (:transactionIds)")
+    suspend fun deleteSubsForTransactions(transactionIds: List<String>)
+
     @Transaction
     suspend fun upsertWithSubs(txn: TransactionEntity, subs: List<SubTransactionEntity>) {
         upsert(txn)
+        deleteSubsForTransactions(listOf(txn.id))
         if (subs.isNotEmpty()) upsertSubs(subs)
     }
 }
