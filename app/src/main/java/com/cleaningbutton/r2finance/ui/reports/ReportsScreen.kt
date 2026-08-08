@@ -32,7 +32,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -58,18 +57,16 @@ internal fun parseHexColor(hex: String): Color {
     )
 }
 
+/**
+ * Reflect — paint-only from process-scoped [AppContainer.aggregates].
+ * No per-tab hydrate / start (warmed at process launch).
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReportsScreen(
     container: AppContainer,
     onOpenSpendingBreakdown: () -> Unit,
 ) {
-    LaunchedEffect(Unit) {
-        val planId = container.ledger.ensureDefaultPlan().id
-        // Paint process-scoped aggregates; hydrate once at app start, not per tab.
-        container.aggregates.start(planId)
-    }
-
     // Precomputed on Default in LedgerAggregatesStore — no main-thread scan.
     val agg by container.aggregates.state.collectAsStateWithLifecycle()
     val report = agg.reflectReport
@@ -84,6 +81,7 @@ fun ReportsScreen(
         topBar = { TopAppBar(title = { Text("Reflect") }) },
     ) { padding ->
         when {
+            // First process build only — never blank after aggregates.ready once.
             !agg.ready && report == null -> {
                 Column(
                     Modifier

@@ -77,6 +77,7 @@ class MainActivity : FragmentActivity() {
                             onAuthenticated = {
                                 session.markUnlocked()
                                 PushRegistration.subscribeAndRegister(this@MainActivity)
+                                app.container.warmAuthenticatedCaches()
                                 phase = "app"
                             },
                         )
@@ -92,6 +93,7 @@ class MainActivity : FragmentActivity() {
                                     activity = this@MainActivity,
                                     onSuccess = {
                                         session.markUnlocked()
+                                        app.container.warmAuthenticatedCaches()
                                         phase = "app"
                                     },
                                     onCancel = {
@@ -102,17 +104,24 @@ class MainActivity : FragmentActivity() {
                                     onFail = {
                                         // Soft fail → enter app with valid session
                                         session.markUnlocked()
+                                        app.container.warmAuthenticatedCaches()
                                         phase = "app"
                                     },
                                 )
                             }
                         }
-                        else -> UpdateGate(
-                            container = app.container,
-                            forceRemote = forceUpdate,
-                            onForceConsumed = { forceUpdate = null },
-                        ) {
-                            AppNavHost(container = app.container)
+                        else -> {
+                            // Already unlocked this process / post-OTA skip — warm connectors once.
+                            LaunchedEffect(Unit) {
+                                app.container.warmAuthenticatedCaches()
+                            }
+                            UpdateGate(
+                                container = app.container,
+                                forceRemote = forceUpdate,
+                                onForceConsumed = { forceUpdate = null },
+                            ) {
+                                AppNavHost(container = app.container)
+                            }
                         }
                     }
                 }

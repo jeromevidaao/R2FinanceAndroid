@@ -60,12 +60,7 @@ fun SpendingBreakdownScreen(
     var preset by remember { mutableStateOf(PresetId.LAST_3) }
     var lazyReport by remember { mutableStateOf<SpendingReport?>(null) }
 
-    LaunchedEffect(Unit) {
-        val planId = container.ledger.ensureDefaultPlan().id
-        // RAM only — no per-screen cloud hydrate.
-        container.aggregates.start(planId)
-    }
-
+    // Paint process-scoped aggregates only (warmed at app start).
     val agg by container.aggregates.state.collectAsStateWithLifecycle()
 
     LaunchedEffect(agg.months, agg.reflectMonthKey) {

@@ -4,7 +4,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -20,11 +19,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -34,6 +29,10 @@ import com.cleaningbutton.r2finance.R
 import com.cleaningbutton.r2finance.data.AppContainer
 import com.cleaningbutton.r2finance.domain.Money
 
+/**
+ * Home — paint-only from process-scoped [AppContainer.aggregates] + plan name.
+ * No network, no ensureHydrated, no per-tab Room warm (done at process start).
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -44,16 +43,7 @@ fun HomeScreen(
     onOpenCategories: () -> Unit,
     onOpenMore: () -> Unit,
 ) {
-    var planName by remember { mutableStateOf("R2Finance") }
-
-    LaunchedEffect(Unit) {
-        val plan = container.ledger.ensureDefaultPlan()
-        planName = plan.name.ifBlank { "R2Finance" }
-        // RAM aggregates only — cloud hydrate is process warmup, not per-tab.
-        container.aggregates.start(plan.id)
-    }
-
-    // Precomputed balances / inbox count from LedgerAggregatesStore.
+    val planName by container.planName.collectAsStateWithLifecycle()
     val agg by container.aggregates.state.collectAsStateWithLifecycle()
     val home = agg.home
 
@@ -84,8 +74,19 @@ fun HomeScreen(
                 StatCard(
                     modifier = Modifier.fillMaxWidth(),
                     label = "Accounts",
-                    value = if (agg.ready) Money.format(home.accountsTotal) else "…",
-                    hint = if (agg.ready) "${home.openAccountCount} open" else "Computing…",
+                    // Keep last numbers while computing; only "…" before first ready.
+                    value = if (agg.ready || agg.home.openAccountCount > 0 || agg.home.accountsTotal != 0L) {
+                        Money.format(home.accountsTotal)
+                    } else {
+                        "…"
+                    },
+                    hint = if (agg.ready) {
+                        "${home.openAccountCount} open"
+                    } else if (home.openAccountCount > 0) {
+                        "${home.openAccountCount} open"
+                    } else {
+                        "Computing…"
+                    },
                 )
             }
 

@@ -30,10 +30,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,11 +39,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cleaningbutton.r2finance.data.AppContainer
 import com.cleaningbutton.r2finance.data.cloud.CloudConnectorAccountPreview
-import com.cleaningbutton.r2finance.data.cloud.CloudConnectorStatus
 import com.cleaningbutton.r2finance.domain.Money
-import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 
@@ -86,6 +82,10 @@ private data class ConnectorAccountRow(
     val credit: Boolean,
 )
 
+/**
+ * Accounts — paint from process-scoped [AppContainer.connectorsCache].
+ * Tab enter only ensureWarm (no-op when ready). Network = first warm + manual refresh.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AccountsScreen(
@@ -93,68 +93,17 @@ fun AccountsScreen(
     /** Kept for nav compatibility; Accounts no longer opens YNAB registers. */
     onOpenAccount: (String) -> Unit = {},
 ) {
-    val scope = rememberCoroutineScope()
-    var loading by remember { mutableStateOf(true) }
-    var refreshing by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var statusMessage by remember { mutableStateOf<String?>(null) }
-    var connectors by remember { mutableStateOf<List<CloudConnectorStatus>>(emptyList()) }
+    val cache = container.connectorsCache
+    val connectors by cache.connectors.collectAsStateWithLifecycle()
+    val ready by cache.ready.collectAsStateWithLifecycle()
+    val loading by cache.loading.collectAsStateWithLifecycle()
+    val refreshing by cache.refreshing.collectAsStateWithLifecycle()
+    val error by cache.error.collectAsStateWithLifecycle()
+    val statusMessage by cache.statusMessage.collectAsStateWithLifecycle()
 
-    fun flattenHousehold(
-        users: List<Pair<String, List<CloudConnectorStatus>>>,
-    ): List<CloudConnectorStatus> =
-        users.flatMap { (email, list) ->
-            list.map { c ->
-                if (c.email.isNullOrBlank()) c.copy(email = email) else c
-            }
-        }
-
-    suspend fun loadConnectors() {
-        error = null
-        try {
-            val hh = runCatching { container.cloudApi.getHouseholdConnectors() }.getOrNull()
-            connectors = if (hh != null && hh.users.isNotEmpty()) {
-                flattenHousehold(hh.users.map { it.email to it.connectors })
-            } else {
-                container.cloudApi.getConnectors().connectors
-            }
-        } catch (e: Exception) {
-            error = e.message ?: e.toString()
-        } finally {
-            loading = false
-        }
-    }
-
-    fun needsBalanceProbe(list: List<CloudConnectorStatus>): Boolean {
-        val connected = list.filter { it.connected }
-        if (connected.isEmpty()) return false
-        val previews = connected.flatMap { it.accountsPreview }
-        if (previews.isEmpty()) return true
-        // DDB connector cache often has account names but null available/current
-        // until /refresh-balances runs once — auto-probe so Capital isn't blank.
-        return previews.all { it.available == null && it.current == null }
-    }
-
+    // Paint RAM immediately; first process visit loads once, then no-op.
     LaunchedEffect(Unit) {
-        loadConnectors()
-        if (needsBalanceProbe(connectors)) {
-            refreshing = true
-            statusMessage = "Loading balances from banks…"
-            try {
-                val res = runCatching { container.cloudApi.refreshConnectorBalances() }.getOrNull()
-                if (res != null) {
-                    val ok = res.results.count { it.ok == true }
-                    val fail = res.results.count { it.ok == false }
-                    statusMessage =
-                        "Updated $ok connector(s)" + if (fail > 0) " · $fail failed" else ""
-                }
-                loadConnectors()
-            } catch (e: Exception) {
-                statusMessage = e.message ?: e.toString()
-            } finally {
-                refreshing = false
-            }
-        }
+        cache.ensureWarm(probeBalancesIfNeeded = true)
     }
 
     val rows = remember(connectors) {
@@ -216,42 +165,14 @@ fun AccountsScreen(
         connectors.mapNotNull { it.lastBalancesAt }.maxOrNull()
     }
 
-    fun refreshFromCloud(probeBalances: Boolean) {
-        if (refreshing) return
-        scope.launch {
-            refreshing = true
-            statusMessage = if (probeBalances) {
-                "Refreshing balances from Plaid…"
-            } else {
-                "Loading connectors…"
-            }
-            try {
-                if (probeBalances) {
-                    val res = container.cloudApi.refreshConnectorBalances()
-                    val ok = res.results.count { it.ok == true }
-                    val fail = res.results.count { it.ok == false }
-                    statusMessage =
-                        "Updated $ok connector(s)" + if (fail > 0) " · $fail failed" else ""
-                }
-                loading = false
-                loadConnectors()
-            } catch (e: Exception) {
-                statusMessage = e.message ?: e.toString()
-                error = e.message
-            } finally {
-                refreshing = false
-            }
-        }
-    }
-
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Accounts") },
                 actions = {
                     IconButton(
-                        enabled = !refreshing && !loading,
-                        onClick = { refreshFromCloud(probeBalances = true) },
+                        enabled = !refreshing && !(loading && !ready),
+                        onClick = { cache.refresh(probeBalances = true) },
                     ) {
                         Icon(Icons.Default.Refresh, contentDescription = "Refresh balances")
                     }
@@ -260,7 +181,8 @@ fun AccountsScreen(
         },
     ) { padding ->
         when {
-            loading && connectors.isEmpty() -> {
+            // Full-screen spinner only before first RAM snapshot.
+            !ready && connectors.isEmpty() && (loading || error == null) -> {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -277,7 +199,7 @@ fun AccountsScreen(
                     )
                 }
             }
-            error != null && connectors.isEmpty() -> {
+            !ready && error != null && connectors.isEmpty() -> {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -293,7 +215,7 @@ fun AccountsScreen(
                         modifier = Modifier.padding(top = 8.dp),
                     )
                     TextButton(
-                        onClick = { refreshFromCloud(probeBalances = false) },
+                        onClick = { cache.refresh(probeBalances = false) },
                         modifier = Modifier.padding(top = 16.dp),
                     ) {
                         Text("Retry")
@@ -301,6 +223,7 @@ fun AccountsScreen(
                 }
             }
             else -> {
+                // ready or has cached connectors — always paint list (mid-refresh banner only).
                 LazyColumn(
                     modifier = Modifier.padding(padding),
                     contentPadding = PaddingValues(vertical = 8.dp),
@@ -384,7 +307,7 @@ fun AccountsScreen(
                                     style = MaterialTheme.typography.bodyMedium,
                                     modifier = Modifier.padding(top = 8.dp),
                                 )
-                                TextButton(onClick = { refreshFromCloud(probeBalances = true) }) {
+                                TextButton(onClick = { cache.refresh(probeBalances = true) }) {
                                     Text("Refresh balances")
                                 }
                             }

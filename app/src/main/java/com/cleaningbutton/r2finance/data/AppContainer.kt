@@ -14,6 +14,9 @@ import com.cleaningbutton.r2finance.update.AppUpdateChecker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 class AppContainer(context: Context) {
@@ -65,9 +68,19 @@ class AppContainer(context: Context) {
     val inboxCache: InboxCache = InboxCache(ledger, applicationScope)
 
     /**
+     * Bank connectors / capital for Accounts — process RAM, not re-fetched on tab enter.
+     */
+    val connectorsCache: ConnectorsCache = ConnectorsCache(cloudApi, applicationScope)
+
+    private val _planName = MutableStateFlow("R2Finance")
+    /** Plan display name for Home top bar (set once at warm). */
+    val planName: StateFlow<String> = _planName.asStateFlow()
+
+    /**
      * Process start only (not per-tab):
-     * 1. Paint-ready RAM: aggregates + Categorization list from Room
+     * 1. Paint-ready RAM: aggregates + Categorization + plan name from Room
      * 2. One silent cloud hydrate (delta, or full if Room empty)
+     * 3. Connectors warm when session token already present
      *
      * Screens must **not** re-call [SyncCoordinator.ensureHydrated] on bottom-nav
      * enter — tab switches should only collect process-scoped StateFlows.
@@ -75,11 +88,27 @@ class AppContainer(context: Context) {
     fun startBackgroundWarmup() {
         applicationScope.launch {
             val plan = ledger.ensureDefaultPlan()
+            _planName.value = plan.name.ifBlank { "R2Finance" }
             aggregates.start(plan.id)
             // Room Categorization list ready before first tab open (no empty flash).
             inboxCache.start(plan.id)
             // Single process hydrate; ConnectivityMonitor handles reconnect later.
             syncCoordinator.ensureHydrated(plan.id)
+            // Connectors need Bearer — skip until logged in ([warmAuthenticatedCaches]).
+            if (sessionStore.isSessionValid()) {
+                connectorsCache.ensureWarm(probeBalancesIfNeeded = true)
+            }
+        }
+    }
+
+    /**
+     * Call after login / bio unlock when token is live so Accounts is warm
+     * before the user opens that tab.
+     */
+    fun warmAuthenticatedCaches() {
+        applicationScope.launch {
+            if (!sessionStore.isSessionValid()) return@launch
+            connectorsCache.ensureWarm(probeBalancesIfNeeded = true)
         }
     }
 }
