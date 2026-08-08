@@ -91,6 +91,8 @@ data class CloudTransaction(
     val transferAccountId: String? = null,
     val transferTransactionId: String? = null,
     val importId: String? = null,
+    /** Bank-feed payee when YNAB payeeId is still empty (parsed). */
+    val importPayeeName: String? = null,
     /** Soft-delete tombstone from server (delta sync). */
     val deleted: Boolean = false,
     val updatedAt: Long = 0,

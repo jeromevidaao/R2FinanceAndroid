@@ -524,6 +524,7 @@ class CloudSync(
             transferAccountId = t.transferAccountId,
             transferTransactionId = t.transferTransactionId,
             importId = t.importId ?: t.clientId,
+            importPayeeName = t.importPayeeName,
             ynabId = t.ynabId.ifBlank { null } ?: t.clientId,
             updatedAt = forceUpdatedAt
                 ?: if (t.updatedAt > 0) t.updatedAt else now,

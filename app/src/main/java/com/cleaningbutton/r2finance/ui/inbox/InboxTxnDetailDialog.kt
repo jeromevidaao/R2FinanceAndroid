@@ -39,7 +39,8 @@ fun InboxTxnDetailDialog(
     val scope = rememberCoroutineScope()
     val txn = row.txn
     var payee by remember {
-        mutableStateOf(row.payeeName ?: txn.importPayeeName.orEmpty())
+        // Prefer resolved display payee (Plaid CC payment form, etc.).
+        mutableStateOf(row.payeeName.orEmpty())
     }
     var amountText by remember {
         mutableStateOf(

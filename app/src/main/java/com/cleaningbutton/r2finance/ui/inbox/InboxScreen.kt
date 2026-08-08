@@ -453,7 +453,7 @@ private fun InboxTxnRow(
         else -> RoundedCornerShape(0.dp)
     }
     val payeeLabel = buildString {
-        append(row.payeeName ?: txn.importPayeeName ?: "No payee")
+        append(row.payeeName ?: "No payee")
         if (showCancelsPair) append(" · cancels pair")
     }
 

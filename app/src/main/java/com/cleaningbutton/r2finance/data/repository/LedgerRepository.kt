@@ -11,6 +11,7 @@ import com.cleaningbutton.r2finance.data.local.entity.SubTransactionEntity
 import com.cleaningbutton.r2finance.data.local.entity.TransactionEntity
 import com.cleaningbutton.r2finance.domain.AccountType
 import com.cleaningbutton.r2finance.domain.ClearedStatus
+import com.cleaningbutton.r2finance.domain.DisplayPayee
 import com.cleaningbutton.r2finance.domain.DomainRules
 import com.cleaningbutton.r2finance.domain.SyncStatus
 import java.util.UUID
@@ -98,13 +99,15 @@ class LedgerRepository(
             txns.observeByAccount(accountId),
             payees.observePayees(planId),
             categories.observeCategories(planId),
-        ) { list, payeeList, catList ->
+            accounts.observeOpenAccounts(planId),
+        ) { list, payeeList, catList, acctList ->
             val payeeMap = payeeList.associateBy { it.id }
             val catMap = catList.associateBy { it.id }
             list.map { t ->
+                val named = t.payeeId?.let { payeeMap[it]?.name }
                 TransactionRow(
                     txn = t,
-                    payeeName = t.payeeId?.let { payeeMap[it]?.name },
+                    payeeName = DisplayPayee.resolveForTxn(t, named, acctList),
                     categoryName = when {
                         t.categoryId != null -> catMap[t.categoryId]?.name
                         else -> null
@@ -128,9 +131,10 @@ class LedgerRepository(
             val acctMap = acctList.associateBy { it.id }
             list.map { t ->
                 val cat = t.categoryId?.let { catMap[it] }
+                val named = t.payeeId?.let { payeeMap[it]?.name }
                 TransactionRow(
                     txn = t,
-                    payeeName = t.payeeId?.let { payeeMap[it]?.name },
+                    payeeName = DisplayPayee.resolveForTxn(t, named, acctList),
                     categoryName = cat?.name,
                     accountName = acctMap[t.accountId]?.name,
                     categoryGroupName = cat?.categoryGroupId?.let { groupMap[it]?.name },
