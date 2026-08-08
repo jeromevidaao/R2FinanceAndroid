@@ -45,9 +45,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.cleaningbutton.r2finance.domain.GoogleMaps
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cleaningbutton.r2finance.R
 import com.cleaningbutton.r2finance.data.AppContainer
@@ -452,9 +454,13 @@ private fun InboxTxnRow(
         isGroupLast -> RoundedCornerShape(bottomStart = 3.dp, bottomEnd = 3.dp)
         else -> RoundedCornerShape(0.dp)
     }
+    val context = LocalContext.current
     val payeeLabel = buildString {
         append(row.payeeName ?: "No payee")
         if (showCancelsPair) append(" · cancels pair")
+    }
+    val mapsUrl = remember(txn.id, row.payeeName) {
+        GoogleMaps.urlForTxn(txn, row.payeeName)
     }
 
     Surface(
@@ -502,29 +508,46 @@ private fun InboxTxnRow(
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.SemiBold,
                 )
-                Text(
-                    buildString {
-                        append(RelativeDate.formatFriendly(txn.date))
-                        append(" · ")
-                        append(row.accountName ?: "Account")
-                        append(" · ")
-                        append(approvalStatusLabel(txn.approved))
-                        val loc = txn.locationDisplay
-                        if (!loc.isNullOrBlank()) {
-                            append(" · ")
-                            append(loc)
-                        } else {
-                            val pfc = txn.plaidPfc
-                            if (!pfc.isNullOrBlank()) {
-                                append(" · ")
-                                append(pfc)
-                            }
-                        }
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Row(
                     modifier = Modifier.padding(top = 2.dp),
-                )
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        buildString {
+                            append(RelativeDate.formatFriendly(txn.date))
+                            append(" · ")
+                            append(row.accountName ?: "Account")
+                            append(" · ")
+                            append(approvalStatusLabel(txn.approved))
+                            val loc = txn.locationDisplay
+                            if (!loc.isNullOrBlank()) {
+                                append(" · ")
+                                append(loc)
+                            } else {
+                                val pfc = txn.plaidPfc
+                                if (!pfc.isNullOrBlank()) {
+                                    append(" · ")
+                                    append(pfc)
+                                }
+                            }
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (mapsUrl != null) {
+                        Text(
+                            "Maps",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.clickable {
+                                GoogleMaps.open(context, mapsUrl)
+                            },
+                        )
+                    }
+                }
                 txn.memo?.takeIf { it.isNotBlank() }?.let {
                     Text(
                         it,

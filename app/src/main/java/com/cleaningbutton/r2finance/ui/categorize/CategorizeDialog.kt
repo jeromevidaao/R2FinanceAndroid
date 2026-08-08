@@ -1,5 +1,6 @@
 package com.cleaningbutton.r2finance.ui.categorize
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,11 +22,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.cleaningbutton.r2finance.data.AppContainer
 import com.cleaningbutton.r2finance.data.local.entity.CategoryEntity
 import com.cleaningbutton.r2finance.data.repository.TransactionRow
+import com.cleaningbutton.r2finance.domain.GoogleMaps
 import com.cleaningbutton.r2finance.domain.Money
 import com.cleaningbutton.r2finance.domain.RelativeDate
 import com.cleaningbutton.r2finance.ui.category.CategoryChip
@@ -53,6 +56,7 @@ fun CategorizeDialog(
     var groupNames by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var query by remember { mutableStateOf("") }
 
+    val context = LocalContext.current
     val single = targets.singleOrNull()
     val bulk = targets.size > 1
     val enrichHint = remember(targets) {
@@ -75,6 +79,10 @@ fun CategorizeDialog(
                 else -> "📍 " + locs.take(2).joinToString(" · ") + " +${locs.size - 2} more"
             }
         }
+    }
+    val mapsUrl = remember(targets) {
+        if (bulk) null
+        else single?.let { GoogleMaps.urlForTxn(it.txn, it.payeeName) }
     }
 
     LaunchedEffect(planId) {
@@ -144,12 +152,32 @@ fun CategorizeDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (enrichHint != null) {
-                    Text(
-                        enrichHint,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                if (enrichHint != null || mapsUrl != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        if (enrichHint != null) {
+                            Text(
+                                enrichHint,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                        }
+                        if (mapsUrl != null) {
+                            Text(
+                                "Google Maps",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.clickable {
+                                    GoogleMaps.open(context, mapsUrl)
+                                },
+                            )
+                        }
+                    }
                 }
                 if (!bulk && single != null) {
                     CategoryChip(
