@@ -69,8 +69,11 @@ fun InboxTxnDetailDialog(
                 payeeName = payee,
                 approved = if (alsoApprove) true else null,
             )
+            // Local first, silent push only — never full cloud pull after edit.
             if (container.connectivityMonitor.online.value) {
-                runCatching { container.syncCoordinator.syncWhenOnline(planId) }
+                container.applicationScope.launch {
+                    runCatching { container.syncCoordinator.pushPendingSilent(planId) }
+                }
             }
             onMessage(
                 when {
@@ -78,7 +81,7 @@ fun InboxTxnDetailDialog(
                         "Saved + approved · offline"
                     alsoApprove -> "Saved + approved"
                     !container.connectivityMonitor.online.value ->
-                        "Saved · offline, uploads later"
+                        "Saved · offline"
                     else -> "Saved"
                 },
             )

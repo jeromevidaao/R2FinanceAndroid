@@ -77,6 +77,16 @@ class SyncCoordinator(
         }
 
     /**
+     * After local categorize/approve: flush PENDING_PUSH only.
+     * **Never pulls** and does not flip [isSyncing] — inbox UI stays on the same
+     * list with rows already removed from Room; no HTTP refresh flash.
+     */
+    suspend fun pushPendingSilent(planId: String = DEFAULT_PLAN_ID): Result<Unit> =
+        mutex.withLock {
+            doPushOnlyLocked(planId, silent = true)
+        }
+
+    /**
      * Manual refresh (toolbar). Push pending, pull DDB, and tick YNAB on the server.
      */
     suspend fun refresh(planId: String = DEFAULT_PLAN_ID): Result<CloudSyncReport> =
@@ -84,22 +94,35 @@ class SyncCoordinator(
             doFullSyncLocked(planId, pullYnab = true).map { it!! }
         }
 
-    private suspend fun doPushOnlyLocked(planId: String): Result<Unit> {
+    private suspend fun doPushOnlyLocked(
+        planId: String,
+        silent: Boolean = false,
+    ): Result<Unit> {
         return try {
             val pending = db.transactionDao().countPendingPush(planId)
             if (pending == 0) return Result.success(Unit)
-            _isSyncing.value = true
-            _statusMessage.value = "Uploading $pending offline change(s)…"
-            cloudSync.pushLocalPending(planId) { step -> _statusMessage.value = step }
+            if (!silent) {
+                _isSyncing.value = true
+                _statusMessage.value = "Uploading $pending offline change(s)…"
+            }
+            cloudSync.pushLocalPending(planId) { step ->
+                if (!silent) _statusMessage.value = step
+            }
             refreshLocalDataFlag(planId)
-            _statusMessage.value = "Offline changes uploaded to cloud"
+            if (!silent) {
+                _statusMessage.value = "Offline changes uploaded to cloud"
+            }
             Result.success(Unit)
         } catch (e: Exception) {
             // Stay silent-ish: still offline or flaky link; Room remains correct.
-            _statusMessage.value = "Will retry upload: ${e.message}"
+            if (!silent) {
+                _statusMessage.value = "Will retry upload: ${e.message}"
+            }
             Result.failure(e)
         } finally {
-            _isSyncing.value = false
+            if (!silent) {
+                _isSyncing.value = false
+            }
         }
     }
 

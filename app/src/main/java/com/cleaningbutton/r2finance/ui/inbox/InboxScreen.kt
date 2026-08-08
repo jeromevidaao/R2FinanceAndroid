@@ -64,10 +64,10 @@ import java.util.Locale
 import kotlinx.coroutines.launch
 
 /**
- * YNAB-style Spending / To approve:
- * - unapproved only, grouped by category for bulk approve
+ * Categorization list (needs-attention):
+ * - unapproved + uncategorized, grouped by category for bulk approve
  * - vertical category color rail along each group
- * - multi-select → Approve / Categorize
+ * - multi-select → Approve / Categorize (local-first, silent background push)
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,11 +79,9 @@ fun InboxScreen(container: AppContainer) {
     var detailTarget by remember { mutableStateOf<TransactionRow?>(null) }
     var inboxRefreshing by remember { mutableStateOf(false) }
     var refreshMessage by remember { mutableStateOf<String?>(null) }
-    var actionBusy by remember { mutableStateOf(false) }
 
     val sync = container.syncCoordinator
     val hydrating by sync.isSyncing.collectAsStateWithLifecycle()
-    val syncMessage by sync.statusMessage.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
         planId = container.ledger.ensureDefaultPlan().id
@@ -118,29 +116,22 @@ fun InboxScreen(container: AppContainer) {
         }
     }
 
-    fun bestEffortSync() {
-        if (container.connectivityMonitor.online.value) {
-            scope.launch {
-                runCatching { container.syncCoordinator.syncWhenOnline(planId) }
-            }
-        }
-    }
-
     fun approveSelected() {
-        if (selectedIds.isEmpty() || actionBusy) return
+        if (selectedIds.isEmpty()) return
         val ids = selectedIds.toList()
-        scope.launch {
-            actionBusy = true
-            container.ledger.approveMany(ids)
-            selectedIds = emptySet()
-            refreshMessage =
-                if (container.connectivityMonitor.online.value) {
-                    "Approved ${ids.size}"
-                } else {
-                    "Approved ${ids.size} · offline, uploads later"
-                }
-            bestEffortSync()
-            actionBusy = false
+        // Optimistic: clear selection immediately; Room drop + silent push.
+        selectedIds = emptySet()
+        refreshMessage =
+            if (container.connectivityMonitor.online.value) {
+                "Approved ${ids.size}"
+            } else {
+                "Approved ${ids.size} · offline"
+            }
+        container.applicationScope.launch {
+            runCatching { container.ledger.approveMany(ids) }
+            if (container.connectivityMonitor.online.value) {
+                runCatching { container.syncCoordinator.pushPendingSilent(planId) }
+            }
         }
     }
 
@@ -161,8 +152,11 @@ fun InboxScreen(container: AppContainer) {
     }
     val categoryGroups = remember(items) { groupInboxByCategory(items) }
 
-    val busy = inboxRefreshing || hydrating
-    val banner = refreshMessage ?: syncMessage
+    // Only manual refresh blocks the empty state. Background silent push must not
+    // flip isSyncing / blank the list after categorize.
+    val showInitialLoad = (inboxRefreshing || hydrating) && items.isEmpty()
+    val busy = inboxRefreshing
+    val banner = refreshMessage
     val hasSelection = selectedIds.isNotEmpty()
 
     Scaffold(
@@ -198,7 +192,6 @@ fun InboxScreen(container: AppContainer) {
                     if (hasSelection) {
                         TextButton(
                             onClick = { selectedIds = emptySet() },
-                            enabled = !actionBusy,
                         ) { Text("Clear") }
                     } else if (items.isNotEmpty()) {
                         TextButton(
@@ -219,7 +212,6 @@ fun InboxScreen(container: AppContainer) {
                     actions = {
                         OutlinedButton(
                             onClick = { approveSelected() },
-                            enabled = !actionBusy,
                             modifier = Modifier.padding(start = 8.dp),
                         ) { Text("Approve") }
                         Spacer(Modifier.width(8.dp))
@@ -229,8 +221,7 @@ fun InboxScreen(container: AppContainer) {
                                     it.txn.transferAccountId == null
                                 }
                             },
-                            enabled = !actionBusy &&
-                                selectedRows.any { it.txn.transferAccountId == null },
+                            enabled = selectedRows.any { it.txn.transferAccountId == null },
                         ) { Text("Categorize") }
                     },
                 )
@@ -238,7 +229,7 @@ fun InboxScreen(container: AppContainer) {
         },
     ) { padding ->
         when {
-            busy && items.isEmpty() -> {
+            showInitialLoad -> {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -373,7 +364,8 @@ fun InboxScreen(container: AppContainer) {
             targets = catTargets,
             onDismiss = { categorizeTargets = null },
             onDone = { msg ->
-                refreshMessage = msg
+                // Stay on this screen; list already drops rows via Room Flow.
+                if (msg != null) refreshMessage = msg
                 selectedIds = emptySet()
             },
         )

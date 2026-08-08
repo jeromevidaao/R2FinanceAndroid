@@ -30,15 +30,18 @@ import com.cleaningbutton.r2finance.domain.Money
 import com.cleaningbutton.r2finance.ui.category.CategoryChip
 import com.cleaningbutton.r2finance.ui.category.categoryChipForCategory
 import com.cleaningbutton.r2finance.ui.category.categoryChipForRow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Category picker for one or many transactions (bulk).
  *
- * Optimistic UX: dialog closes as soon as you tap a category. Room write +
- * cloud push run on [AppContainer.applicationScope] so work continues after
- * dismiss. Offline edits stay PENDING_PUSH; [ConnectivityMonitor] flushes
- * when the phone comes back online.
+ * Super-fast path:
+ * 1. Room write (local) → inbox Flow drops the rows
+ * 2. Close dialog → back on Categorization list (no navigation)
+ * 3. Silent push PENDING_PUSH (no HTTP pull / no full list refresh)
+ * Offline: ConnectivityMonitor flushes when the network returns.
  */
 @Composable
 fun CategorizeDialog(
@@ -77,25 +80,23 @@ fun CategorizeDialog(
     fun pickCategory(cat: CategoryEntity) {
         val ids = targets.map { it.txn.id }
         val offline = !container.connectivityMonitor.online.value
-        // Close immediately — process in background so the next item is free.
-        onDone(
+        val doneMsg =
             when {
-                bulk && offline ->
-                    "Categorized ${ids.size} · ${cat.name} · offline, uploads later"
-                bulk ->
-                    "Categorized ${ids.size} · ${cat.name}"
-                offline ->
-                    "Categorized · ${cat.name} · offline, uploads later"
-                else ->
-                    "Categorized · ${cat.name}"
-            },
-        )
-        onDismiss()
-        // Survive dialog dispose: process-scoped scope, not composition scope.
+                bulk && offline -> "Categorized ${ids.size} · offline"
+                bulk -> "Categorized ${ids.size}"
+                offline -> "Categorized · offline"
+                else -> null
+            }
+        // Room first (ms) so the list drops rows, then dismiss + silent push.
+        // Never call syncWhenOnline / pull — that was reloading the whole list.
         container.applicationScope.launch {
             runCatching { container.ledger.setCategoryMany(ids, cat.id) }
+            withContext(Dispatchers.Main.immediate) {
+                onDone(doneMsg)
+                onDismiss()
+            }
             if (container.connectivityMonitor.online.value) {
-                runCatching { container.syncCoordinator.syncWhenOnline(planId) }
+                runCatching { container.syncCoordinator.pushPendingSilent(planId) }
             }
         }
     }
