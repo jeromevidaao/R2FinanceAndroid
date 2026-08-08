@@ -58,6 +58,19 @@ fun CategorizeDialog(
 
     val single = targets.singleOrNull()
     val bulk = targets.size > 1
+    val locationLine = remember(targets) {
+        if (!bulk) {
+            single?.txn?.locationDisplay?.takeIf { it.isNotBlank() }
+        } else {
+            val locs = targets.mapNotNull { it.txn.locationDisplay?.takeIf { s -> s.isNotBlank() } }.distinct()
+            when {
+                locs.isEmpty() -> null
+                locs.size <= 3 -> locs.joinToString(" · ")
+                else -> locs.take(2).joinToString(" · ") + " +${locs.size - 2} more"
+            }
+        }
+    }
+    val pfcHint = if (!bulk) single?.txn?.plaidPfc?.takeIf { it.isNotBlank() } else null
 
     LaunchedEffect(planId) {
         categories = container.ledger.listAssignableCategories(planId)
@@ -131,6 +144,20 @@ fun CategorizeDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (locationLine != null) {
+                    Text(
+                        buildString {
+                            append("📍 ")
+                            append(locationLine)
+                            if (pfcHint != null) {
+                                append(" · ")
+                                append(pfcHint)
+                            }
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 if (!bulk && single != null) {
                     CategoryChip(
                         model = categoryChipForRow(single, single.categoryGroupName),

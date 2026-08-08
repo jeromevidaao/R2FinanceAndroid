@@ -100,6 +100,14 @@ data class CloudTransaction(
     val payeeName: String? = null,
     val reason: String? = null,
     val onBudget: Boolean? = null,
+    /** Plaid enrichment from cloud (optional). */
+    val plaidTransactionId: String? = null,
+    val plaidMerchantName: String? = null,
+    val plaidPaymentChannel: String? = null,
+    val plaidPfc: String? = null,
+    /** "City, ST" (US) or "City, Country" (intl). */
+    val locationDisplay: String? = null,
+    val locationSource: String? = null,
 ) {
     /** Room / local primary key preference. */
     fun stableId(): String = id?.takeIf { it.isNotBlank() }

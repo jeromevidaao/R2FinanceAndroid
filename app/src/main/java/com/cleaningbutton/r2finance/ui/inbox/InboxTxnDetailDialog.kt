@@ -107,6 +107,13 @@ fun InboxTxnDetailDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                txn.locationDisplay?.takeIf { it.isNotBlank() }?.let { loc ->
+                    Text(
+                        "📍 $loc",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 CategoryChip(
                     model = categoryChipForRow(row, row.categoryGroupName),
                 )

@@ -457,6 +457,11 @@ private fun InboxTxnRow(
                         append(row.accountName ?: "Account")
                         append(" · ")
                         append(clearedLabel(txn.cleared, txn.approved))
+                        val loc = txn.locationDisplay
+                        if (!loc.isNullOrBlank()) {
+                            append(" · ")
+                            append(loc)
+                        }
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

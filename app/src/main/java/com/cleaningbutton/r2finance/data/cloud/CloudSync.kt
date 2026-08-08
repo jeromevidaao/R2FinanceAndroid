@@ -495,6 +495,12 @@ class CloudSync(
             updatedAt = if (t.updatedAt > 0) t.updatedAt else now,
             syncStatus = SyncStatus.SYNCED,
             deleted = deleted || t.deleted,
+            plaidTransactionId = t.plaidTransactionId,
+            plaidMerchantName = t.plaidMerchantName,
+            plaidPaymentChannel = t.plaidPaymentChannel,
+            plaidPfc = t.plaidPfc,
+            locationDisplay = t.locationDisplay,
+            locationSource = t.locationSource,
         )
     }
 

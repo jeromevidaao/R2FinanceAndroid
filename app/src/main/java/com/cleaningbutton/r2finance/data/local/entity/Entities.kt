@@ -202,6 +202,17 @@ data class TransactionEntity(
     val updatedAt: Long = System.currentTimeMillis(),
     val syncStatus: SyncStatus = SyncStatus.LOCAL_ONLY,
     val deleted: Boolean = false,
+    /** Plaid match id when cloud enrichment linked this spend. */
+    val plaidTransactionId: String? = null,
+    val plaidMerchantName: String? = null,
+    val plaidPaymentChannel: String? = null,
+    val plaidPfc: String? = null,
+    /**
+     * Short place label for categorize UI:
+     * US → "City, ST"; outside US → "City, Country".
+     */
+    val locationDisplay: String? = null,
+    val locationSource: String? = null,
 )
 
 @Entity(
