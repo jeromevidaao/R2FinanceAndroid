@@ -67,7 +67,8 @@ class CloudSync(
     ): CloudSyncReport = withContext(Dispatchers.IO) {
         val wantFull = forceFull || since <= 0L
         onProgress(if (wantFull) "Full sync from cloud…" else "Fetching changes…")
-        val pack = api.getSyncChanges(since = if (wantFull) 0L else since, full = wantFull)
+        // Multi-page merge — full snapshots exceed Lambda 6MB in one response.
+        val pack = api.getSyncChangesAll(since = if (wantFull) 0L else since, full = wantFull)
         val mode = pack.mode.ifBlank { if (wantFull) "full" else "delta" }
         val isFull = mode == "full"
         val now = System.currentTimeMillis()

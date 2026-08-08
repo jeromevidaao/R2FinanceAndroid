@@ -128,6 +128,12 @@ data class CloudSyncChangesResponse(
     val payees: List<CloudPayeeDelta> = emptyList(),
     val transactions: List<CloudTransaction> = emptyList(),
     val counts: CloudSyncCounts? = null,
+    /** True when more transaction pages remain — do not advance local cursor yet. */
+    val hasMore: Boolean = false,
+    val txnOffset: Int = 0,
+    val nextTxnOffset: Int = 0,
+    val txnLimit: Int = 0,
+    val txnTotal: Int = 0,
 )
 
 @Serializable
@@ -137,6 +143,7 @@ data class CloudSyncCounts(
     val categories: Int = 0,
     val payees: Int = 0,
     val transactions: Int = 0,
+    val txnTotal: Int = 0,
 )
 
 @Serializable
@@ -440,8 +447,13 @@ class CloudApi(
     /**
      * Local-first sync: full snapshot (`since=0` / `full=1`) or incremental
      * changes since the last server cursor (includes deleted tombstones).
+     * Transactions may be paged via [txnOffset] / [CloudSyncChangesResponse.hasMore].
      */
-    suspend fun getSyncChanges(since: Long = 0L, full: Boolean = false): CloudSyncChangesResponse {
+    suspend fun getSyncChanges(
+        since: Long = 0L,
+        full: Boolean = false,
+        txnOffset: Int = 0,
+    ): CloudSyncChangesResponse {
         val q = buildString {
             append("/v1/sync/changes?")
             if (full || since <= 0L) {
@@ -449,8 +461,62 @@ class CloudApi(
             } else {
                 append("since=").append(since)
             }
+            if (txnOffset > 0) {
+                append("&txnOffset=").append(txnOffset)
+            }
         }
         return get(q, CloudSyncChangesResponse.serializer())
+    }
+
+    /**
+     * Fetch all transaction pages and merge into one pack. Full snapshots with
+     * ~7k+ rows exceed the Lambda 6MB response limit in a single request.
+     */
+    suspend fun getSyncChangesAll(
+        since: Long = 0L,
+        full: Boolean = false,
+    ): CloudSyncChangesResponse {
+        var txnOffset = 0
+        var first: CloudSyncChangesResponse? = null
+        val allTxns = ArrayList<CloudTransaction>()
+        // Safety: 40 × 2500 = 100k rows — well above the household ledger.
+        repeat(40) {
+            val pack = getSyncChanges(since = since, full = full, txnOffset = txnOffset)
+            if (first == null) first = pack
+            allTxns.addAll(pack.transactions)
+            if (!pack.hasMore) {
+                val base = first!!
+                return base.copy(
+                    plan = base.plan ?: pack.plan,
+                    accounts = base.accounts.ifEmpty { pack.accounts },
+                    groups = base.groups.ifEmpty { pack.groups },
+                    categories = base.categories.ifEmpty { pack.categories },
+                    payees = base.payees.ifEmpty { pack.payees },
+                    transactions = allTxns,
+                    hasMore = false,
+                    txnOffset = 0,
+                    nextTxnOffset = allTxns.size,
+                    txnTotal = if (pack.txnTotal > 0) pack.txnTotal else allTxns.size,
+                    cursor = when {
+                        pack.cursor > 0L -> pack.cursor
+                        pack.serverTime > 0L -> pack.serverTime
+                        else -> base.cursor
+                    },
+                    serverTime = if (pack.serverTime > 0L) pack.serverTime else base.serverTime,
+                    mode = pack.mode.ifBlank { base.mode },
+                    counts = CloudSyncCounts(
+                        accounts = base.counts?.accounts ?: base.accounts.size,
+                        groups = base.counts?.groups ?: base.groups.size,
+                        categories = base.counts?.categories ?: base.categories.size,
+                        payees = base.counts?.payees ?: base.payees.size,
+                        transactions = allTxns.size,
+                        txnTotal = if (pack.txnTotal > 0) pack.txnTotal else allTxns.size,
+                    ),
+                )
+            }
+            txnOffset = if (pack.nextTxnOffset > 0) pack.nextTxnOffset else allTxns.size
+        }
+        error("sync/changes pagination exceeded max pages")
     }
 
     suspend fun getInbox(): CloudInboxResponse =
