@@ -296,6 +296,115 @@ data class DevicePushAccepted(
     val transactions: Int = 0,
 )
 
+@Serializable
+data class CloudConnectorsResponse(
+    val email: String? = null,
+    val connectors: List<CloudConnectorStatus> = emptyList(),
+)
+
+@Serializable
+data class CloudHouseholdConnectorsResponse(
+    val requester: String? = null,
+    val users: List<CloudHouseholdUserConnectors> = emptyList(),
+)
+
+@Serializable
+data class CloudHouseholdUserConnectors(
+    val email: String = "",
+    val connectors: List<CloudConnectorStatus> = emptyList(),
+)
+
+@Serializable
+data class CloudConnectorStatus(
+    val connectorId: String? = null,
+    val email: String? = null,
+    val provider: String = "plaid",
+    val institution: String? = null,
+    val institutionName: String? = null,
+    val configured: Boolean = false,
+    val connected: Boolean = false,
+    val itemId: String? = null,
+    val connectedAt: Long? = null,
+    val accountCount: Int? = null,
+    val accountsPreview: List<CloudConnectorAccountPreview> = emptyList(),
+    val lastBalancesAt: Long? = null,
+)
+
+@Serializable
+data class CloudConnectorAccountPreview(
+    val accountId: String = "",
+    val name: String = "",
+    val officialName: String? = null,
+    val mask: String? = null,
+    val type: String? = null,
+    val subtype: String? = null,
+    val available: Double? = null,
+    val current: Double? = null,
+    val limit: Double? = null,
+    val isoCurrencyCode: String? = null,
+) {
+    /** Prefer Plaid available; fall back to current. */
+    fun displayAmount(): Double? = available ?: current
+
+    fun isCredit(): Boolean {
+        val t = type.orEmpty().lowercase()
+        val s = subtype.orEmpty().lowercase()
+        return t == "credit" || s == "credit card" || s == "paypal"
+    }
+}
+
+@Serializable
+data class CloudRefreshBalancesResponse(
+    val ok: Boolean = false,
+    val email: String? = null,
+    val refreshedAt: Long? = null,
+    val results: List<CloudRefreshBalanceResult> = emptyList(),
+)
+
+@Serializable
+data class CloudRefreshBalanceResult(
+    val connectorId: String = "",
+    val ok: Boolean? = null,
+    val skipped: Boolean? = null,
+    val reason: String? = null,
+    val accountCount: Int? = null,
+    val lastBalancesAt: Long? = null,
+    val error: String? = null,
+)
+
+@Serializable
+data class CloudConnectorAccountsResponse(
+    val ok: Boolean = false,
+    val connectorId: String? = null,
+    val email: String? = null,
+    val institutionName: String? = null,
+    val itemId: String? = null,
+    val connected: Boolean? = null,
+    val accounts: List<CloudConnectorLiveAccount> = emptyList(),
+    val accountsPreview: List<CloudConnectorAccountPreview> = emptyList(),
+    val lastBalancesAt: Long? = null,
+    val source: String? = null,
+)
+
+@Serializable
+data class CloudConnectorLiveAccount(
+    val accountId: String = "",
+    val name: String = "",
+    val officialName: String? = null,
+    val mask: String? = null,
+    val type: String? = null,
+    val subtype: String? = null,
+    val balances: CloudConnectorBalances = CloudConnectorBalances(),
+)
+
+@Serializable
+data class CloudConnectorBalances(
+    val available: Double? = null,
+    val current: Double? = null,
+    val limit: Double? = null,
+    val isoCurrencyCode: String? = null,
+)
+
 /**
  * Authenticated R2Finance cloud client.
  *
@@ -379,6 +488,36 @@ class CloudApi(
     suspend fun devicePush(request: DevicePushRequest): DevicePushResponse {
         val payload = json.encodeToString(DevicePushRequest.serializer(), request)
         return post("/v1/device/push", payload, DevicePushResponse.serializer())
+    }
+
+    // ── Bank connectors (cached balances for Accounts) ────────────────
+
+    /** Connectors for the signed-in email (includes accountsPreview + balances). */
+    suspend fun getConnectors(): CloudConnectorsResponse =
+        get("/v1/connectors", CloudConnectorsResponse.serializer())
+
+    /** All household members × banks with accountsPreview when present. */
+    suspend fun getHouseholdConnectors(): CloudHouseholdConnectorsResponse =
+        get("/v1/connectors?household=1", CloudHouseholdConnectorsResponse.serializer())
+
+    /**
+     * Live Plaid accounts/get for every connected bank → writes balances
+     * onto CONNECTOR meta. Accounts UI then reloads the cache.
+     */
+    suspend fun refreshConnectorBalances(): CloudRefreshBalancesResponse =
+        post(
+            "/v1/connectors/refresh-balances",
+            "{}",
+            CloudRefreshBalancesResponse.serializer(),
+        )
+
+    /** Single bank accounts. Default cache; [live]=true probes Plaid. */
+    suspend fun getConnectorAccounts(bankId: String, live: Boolean = false): CloudConnectorAccountsResponse {
+        val q = if (live) "?live=1" else ""
+        return get(
+            "/v1/connectors/$bankId/accounts$q",
+            CloudConnectorAccountsResponse.serializer(),
+        )
     }
 
     private fun Request.Builder.applyAuth(): Request.Builder {
