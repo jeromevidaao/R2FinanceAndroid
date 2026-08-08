@@ -83,6 +83,17 @@ fun InboxScreen(container: AppContainer) {
     LaunchedEffect(Unit) {
         planId = container.ledger.ensureDefaultPlan().id
         sync.ensureHydrated(planId)
+        // Heal Categorization count vs YNAB: lightweight inbox-only pull so
+        // missing unapproved (never re-sent by delta) land in Room.
+        if (container.connectivityMonitor.online.value) {
+            runCatching {
+                container.cloudSync.pullInbox { step -> refreshMessage = step }
+            }.onSuccess { report ->
+                if (report.inboxCount > 0) {
+                    refreshMessage = null
+                }
+            }
+        }
     }
 
     val items by remember(planId) {

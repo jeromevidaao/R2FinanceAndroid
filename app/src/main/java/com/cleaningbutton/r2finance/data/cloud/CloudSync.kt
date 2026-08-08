@@ -259,24 +259,27 @@ class CloudSync(
             db.transactionDao().softDeleteSyncedOlderThan(planId, syncStart, now)
         }
 
-        // Lightweight inbox merge so unapproved land even if delta was tiny.
+        // Authoritative inbox merge so Categorization matches YNAB even when:
+        // - an older partial full-sync left unapproved out of Room, and
+        // - deltas never re-send unchanged unapproved rows.
+        // Never filter by pack.accounts — delta packs only include *changed*
+        // accounts and used to drop most inbox rows (e.g. 28 of ~104).
         onProgress("Inbox…")
         val inbox = runCatching { api.getInbox() }.getOrNull()
         inbox?.transactions?.let { list ->
-            val accountIds = pack.accounts
-                .filter { !it.deleted && !it.closed }
-                .map { it.ynabId }
-                .toSet()
-                .ifEmpty {
-                    // Delta may omit accounts; accept inbox rows by id only.
-                    emptySet()
-                }
             val inboxEntities = list.mapNotNull { t ->
                 val stableId = t.stableId()
                 if (stableId.isBlank()) null
                 else if (stableId in pendingLocal || t.ynabId in pendingLocal) null
-                else if (accountIds.isNotEmpty() && t.accountId !in accountIds) null
-                else toEntity(t, planId, now, deleted = t.deleted, forceUpdatedAt = if (isFull) syncStart else null)
+                else if (!t.deleted && t.accountId.isBlank()) null
+                else toEntity(
+                    t,
+                    planId,
+                    now,
+                    deleted = t.deleted,
+                    // Stamp syncStart on full so prune keeps these live.
+                    forceUpdatedAt = if (isFull) syncStart else null,
+                )
             }
             inboxEntities.chunked(200).forEach { chunk ->
                 db.transactionDao().upsertAll(chunk)
