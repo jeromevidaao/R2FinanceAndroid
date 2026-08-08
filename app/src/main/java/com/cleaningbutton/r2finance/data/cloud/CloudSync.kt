@@ -69,7 +69,11 @@ class CloudSync(
         onProgress(if (wantFull) "Full sync from cloud…" else "Fetching changes…")
         val pack = api.getSyncChanges(since = if (wantFull) 0L else since, full = wantFull)
         val mode = pack.mode.ifBlank { if (wantFull) "full" else "delta" }
+        val isFull = mode == "full"
         val now = System.currentTimeMillis()
+        // Full mode stamps every live upsert with this clock so prune can
+        // soft-delete only rows the server did not re-send (never wipe-first).
+        val syncStart = now
         val planId = "default"
         val planInfo = pack.plan ?: CloudPlan()
         val cursor = when {
@@ -93,9 +97,8 @@ class CloudSync(
         val pendingLocal = db.transactionDao().pendingPushIds(planId).toSet()
 
         onProgress("Accounts…")
-        if (mode == "full") {
-            db.accountDao().softDeleteAllSynced(planId, now)
-        }
+        // Upsert-first (no softDeleteAll). A wipe-before-write blanked Home/Reflect
+        // to $0 while 7k+ transactions re-inserted — or permanently if interrupted.
         if (pack.accounts.isNotEmpty()) {
             db.accountDao().upsertAll(
                 pack.accounts.map { a ->
@@ -109,12 +112,19 @@ class CloudSync(
                         note = a.note,
                         transferPayeeId = a.transferPayeeId,
                         ynabId = a.ynabId,
-                        updatedAt = if (a.updatedAt > 0) a.updatedAt else now,
+                        updatedAt = when {
+                            isFull -> syncStart
+                            a.updatedAt > 0 -> a.updatedAt
+                            else -> now
+                        },
                         syncStatus = SyncStatus.SYNCED,
                         deleted = a.deleted,
                     )
                 },
             )
+        }
+        if (isFull) {
+            db.accountDao().softDeleteSyncedOlderThan(planId, syncStart, now)
         }
 
         onProgress("Categories…")
@@ -180,13 +190,9 @@ class CloudSync(
         }
 
         onProgress(
-            if (mode == "full") "Transactions (full)…"
+            if (isFull) "Transactions (full)…"
             else "Transactions (+${pack.transactions.size})…",
         )
-        if (mode == "full") {
-            // Heal drift: tombstone all synced live rows, then re-upsert server live set.
-            db.transactionDao().softDeleteAllSynced(planId, now)
-        }
 
         val entities = mutableListOf<TransactionEntity>()
         val subs = mutableListOf<SubTransactionEntity>()
@@ -201,11 +207,20 @@ class CloudSync(
                 continue
             }
             if (t.deleted) {
-                entities.add(toEntity(t, planId, now, deleted = true))
+                entities.add(toEntity(t, planId, now, deleted = true, forceUpdatedAt = null))
                 continue
             }
             if (t.date.isBlank()) continue
-            entities.add(toEntity(t, planId, now, deleted = false))
+            // Full: stamp syncStart so prune leaves these live.
+            entities.add(
+                toEntity(
+                    t,
+                    planId,
+                    now,
+                    deleted = false,
+                    forceUpdatedAt = if (isFull) syncStart else null,
+                ),
+            )
             for (s in t.subtransactions) {
                 subs.add(
                     SubTransactionEntity(
@@ -233,6 +248,11 @@ class CloudSync(
                 db.transactionDao().upsertSubs(chunk)
             }
         }
+        // Prune only after live rows landed — never leave the ledger empty mid-sync.
+        if (isFull) {
+            onProgress("Reconciling local ledger…")
+            db.transactionDao().softDeleteSyncedOlderThan(planId, syncStart, now)
+        }
 
         // Lightweight inbox merge so unapproved land even if delta was tiny.
         onProgress("Inbox…")
@@ -251,7 +271,7 @@ class CloudSync(
                 if (stableId.isBlank()) null
                 else if (stableId in pendingLocal || t.ynabId in pendingLocal) null
                 else if (accountIds.isNotEmpty() && t.accountId !in accountIds) null
-                else toEntity(t, planId, now, deleted = t.deleted)
+                else toEntity(t, planId, now, deleted = t.deleted, forceUpdatedAt = if (isFull) syncStart else null)
             }
             inboxEntities.chunked(200).forEach { chunk ->
                 db.transactionDao().upsertAll(chunk)
@@ -476,6 +496,8 @@ class CloudSync(
         planId: String,
         now: Long,
         deleted: Boolean = false,
+        /** When set (full sync), stamp so prune leaves this row live. */
+        forceUpdatedAt: Long? = null,
     ): TransactionEntity {
         val stableId = t.stableId()
         return TransactionEntity(
@@ -494,7 +516,8 @@ class CloudSync(
             transferTransactionId = t.transferTransactionId,
             importId = t.importId ?: t.clientId,
             ynabId = t.ynabId.ifBlank { null } ?: t.clientId,
-            updatedAt = if (t.updatedAt > 0) t.updatedAt else now,
+            updatedAt = forceUpdatedAt
+                ?: if (t.updatedAt > 0) t.updatedAt else now,
             syncStatus = SyncStatus.SYNCED,
             deleted = deleted || t.deleted,
             plaidTransactionId = t.plaidTransactionId,

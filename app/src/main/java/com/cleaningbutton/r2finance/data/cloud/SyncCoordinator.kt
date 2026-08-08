@@ -131,7 +131,10 @@ class SyncCoordinator(
 
     private fun shouldFullSync(): Boolean {
         val lastFull = lastFullSyncAt()
-        if (lastFull <= 0L) return true
+        // Missing lastFull (upgrade / first install with Room already filled) must NOT
+        // force a 6MB full pull that used to wipe-before-write and blank the UI.
+        // Empty Room still force-fulls via ensureHydrated / syncWhenOnline.
+        if (lastFull <= 0L) return false
         return System.currentTimeMillis() - lastFull >= FULL_SYNC_INTERVAL_MS
     }
 
@@ -238,13 +241,11 @@ class SyncCoordinator(
         if (report.cursor > 0L) {
             edit.putLong(KEY_SYNC_CURSOR, report.cursor)
         }
-        if (report.mode == "full" || report.mode.isBlank() && report.cursor > 0L) {
-            // Treat successful full (or first) pull as full baseline.
-            if (report.mode == "full" || lastFullSyncAt() <= 0L) {
-                edit.putLong(KEY_LAST_FULL_SYNC_AT, now)
-            }
-        }
         if (report.mode == "full") {
+            edit.putLong(KEY_LAST_FULL_SYNC_AT, now)
+        } else if (lastFullSyncAt() <= 0L) {
+            // Seed 24h heal clock after first successful delta so upgrades don't
+            // immediately re-download the whole ledger.
             edit.putLong(KEY_LAST_FULL_SYNC_AT, now)
         }
         edit.apply()

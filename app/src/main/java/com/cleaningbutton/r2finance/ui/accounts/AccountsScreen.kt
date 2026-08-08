@@ -125,8 +125,36 @@ fun AccountsScreen(
         }
     }
 
+    fun needsBalanceProbe(list: List<CloudConnectorStatus>): Boolean {
+        val connected = list.filter { it.connected }
+        if (connected.isEmpty()) return false
+        val previews = connected.flatMap { it.accountsPreview }
+        if (previews.isEmpty()) return true
+        // DDB connector cache often has account names but null available/current
+        // until /refresh-balances runs once — auto-probe so Capital isn't blank.
+        return previews.all { it.available == null && it.current == null }
+    }
+
     LaunchedEffect(Unit) {
         loadConnectors()
+        if (needsBalanceProbe(connectors)) {
+            refreshing = true
+            statusMessage = "Loading balances from banks…"
+            try {
+                val res = runCatching { container.cloudApi.refreshConnectorBalances() }.getOrNull()
+                if (res != null) {
+                    val ok = res.results.count { it.ok == true }
+                    val fail = res.results.count { it.ok == false }
+                    statusMessage =
+                        "Updated $ok connector(s)" + if (fail > 0) " · $fail failed" else ""
+                }
+                loadConnectors()
+            } catch (e: Exception) {
+                statusMessage = e.message ?: e.toString()
+            } finally {
+                refreshing = false
+            }
+        }
     }
 
     val rows = remember(connectors) {

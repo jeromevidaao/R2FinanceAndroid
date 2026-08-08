@@ -70,6 +70,23 @@ interface AccountDao {
         """,
     )
     suspend fun softDeleteAllSynced(planId: String, now: Long)
+
+    /**
+     * Full-sync prune: after live rows are upserted with [updatedAt] >= [syncStart],
+     * tombstone any remaining SYNCED rows that were not in the server live set.
+     * Never wipe-before-write — UI keeps prior balances until upserts land.
+     */
+    @Query(
+        """
+        UPDATE accounts
+        SET deleted = 1, updatedAt = :now
+        WHERE planId = :planId
+          AND syncStatus != 'PENDING_PUSH'
+          AND deleted = 0
+          AND updatedAt < :syncStart
+        """,
+    )
+    suspend fun softDeleteSyncedOlderThan(planId: String, syncStart: Long, now: Long)
 }
 
 @Dao
@@ -290,6 +307,7 @@ interface TransactionDao {
     /**
      * Full-resync reconcile: soft-delete every synced (non-pending) live row so
      * a subsequent upsert of the server live set heals drift without huge IN lists.
+     * Prefer [softDeleteSyncedOlderThan] (upsert-first) so the UI never flashes empty.
      */
     @Query(
         """
@@ -301,6 +319,22 @@ interface TransactionDao {
         """,
     )
     suspend fun softDeleteAllSynced(planId: String, now: Long)
+
+    /**
+     * Full-sync prune after live upserts stamped with [updatedAt] >= [syncStart].
+     * Orphans (deleted on server) keep older updatedAt and are tombstoned here.
+     */
+    @Query(
+        """
+        UPDATE transactions
+        SET deleted = 1, updatedAt = :now
+        WHERE planId = :planId
+          AND syncStatus != 'PENDING_PUSH'
+          AND deleted = 0
+          AND updatedAt < :syncStart
+        """,
+    )
+    suspend fun softDeleteSyncedOlderThan(planId: String, syncStart: Long, now: Long)
 
     @Query("SELECT * FROM subtransactions WHERE transactionId = :txnId AND deleted = 0")
     suspend fun getSubs(txnId: String): List<SubTransactionEntity>
