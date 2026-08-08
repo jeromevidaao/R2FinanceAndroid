@@ -461,6 +461,12 @@ private fun InboxTxnRow(
                         if (!loc.isNullOrBlank()) {
                             append(" · ")
                             append(loc)
+                        } else {
+                            val pfc = txn.plaidPfc
+                            if (!pfc.isNullOrBlank()) {
+                                append(" · ")
+                                append(pfc)
+                            }
                         }
                     },
                     style = MaterialTheme.typography.bodySmall,
