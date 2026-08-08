@@ -53,14 +53,11 @@ import com.cleaningbutton.r2finance.data.cloud.SyncCoordinator
 import com.cleaningbutton.r2finance.data.repository.TransactionRow
 import com.cleaningbutton.r2finance.domain.ClearedStatus
 import com.cleaningbutton.r2finance.domain.Money
+import com.cleaningbutton.r2finance.domain.RelativeDate
 import com.cleaningbutton.r2finance.ui.categorize.CategorizeDialog
 import com.cleaningbutton.r2finance.ui.category.CategoryChip
 import com.cleaningbutton.r2finance.ui.category.groupInboxByCategory
 import com.cleaningbutton.r2finance.ui.category.parseHexColor
-import java.time.LocalDate
-import java.time.format.DateTimeFormatter
-import java.time.format.FormatStyle
-import java.util.Locale
 import kotlinx.coroutines.launch
 
 /**
@@ -455,7 +452,7 @@ private fun InboxTxnRow(
                 )
                 Text(
                     buildString {
-                        append(formatInboxDateShort(txn.date))
+                        append(RelativeDate.formatFriendly(txn.date))
                         append(" · ")
                         append(row.accountName ?: "Account")
                         append(" · ")
@@ -491,13 +488,4 @@ private fun clearedLabel(cleared: ClearedStatus, approved: Boolean): String {
         ClearedStatus.cleared -> "cleared"
         ClearedStatus.uncleared -> "uncleared"
     }
-}
-
-private fun formatInboxDateShort(iso: String): String {
-    return runCatching {
-        val d = LocalDate.parse(iso)
-        val fmt = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)
-            .withLocale(Locale.getDefault())
-        d.format(fmt)
-    }.getOrDefault(iso)
 }

@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import com.cleaningbutton.r2finance.data.AppContainer
 import com.cleaningbutton.r2finance.data.repository.TransactionRow
 import com.cleaningbutton.r2finance.domain.Money
+import com.cleaningbutton.r2finance.domain.RelativeDate
 import com.cleaningbutton.r2finance.ui.category.CategoryChip
 import com.cleaningbutton.r2finance.ui.category.categoryChipForRow
 import kotlinx.coroutines.launch
@@ -99,7 +100,7 @@ fun InboxTxnDetailDialog(
                     buildString {
                         append(row.accountName ?: "Account")
                         append(" · ")
-                        append(txn.date)
+                        append(RelativeDate.formatFriendly(txn.date))
                         append(" · ")
                         append(if (txn.approved) txn.cleared.name else "needs approval")
                     },

@@ -27,6 +27,7 @@ import com.cleaningbutton.r2finance.data.AppContainer
 import com.cleaningbutton.r2finance.data.local.entity.CategoryEntity
 import com.cleaningbutton.r2finance.data.repository.TransactionRow
 import com.cleaningbutton.r2finance.domain.Money
+import com.cleaningbutton.r2finance.domain.RelativeDate
 import com.cleaningbutton.r2finance.ui.category.CategoryChip
 import com.cleaningbutton.r2finance.ui.category.categoryChipForCategory
 import com.cleaningbutton.r2finance.ui.category.categoryChipForRow
@@ -122,7 +123,7 @@ fun CategorizeDialog(
                         buildString {
                             append(single?.payeeName ?: "No payee")
                             append(" · ")
-                            append(single?.txn?.date.orEmpty())
+                            append(RelativeDate.formatFriendly(single?.txn?.date))
                             append(" · ")
                             append(Money.format(single?.txn?.amountMilli ?: 0L))
                         }
