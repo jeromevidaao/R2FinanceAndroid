@@ -79,11 +79,13 @@ fun AuthScreen(
             val st = authApi.status(email)
             step = when {
                 st.mustSetPassword -> Step.SetPassword
-                !st.mfaEnabled -> Step.Login // password exists but MFA not on — login then setup
+                // Password exists but no MFA — login will force authenticator setup.
+                !st.mfaEnabled -> Step.Login
                 else -> Step.Login
             }
-            statusLine = when (step) {
-                Step.SetPassword -> "First launch — create your password"
+            statusLine = when {
+                step == Step.SetPassword -> "First launch — create your password"
+                !st.mfaEnabled -> "Sign in — authenticator MFA required next"
                 else -> "Sign in"
             }
         }.onFailure {
@@ -195,23 +197,25 @@ fun AuthScreen(
                             runCatching {
                                 val res = authApi.login(email, password)
                                 when {
-                                    res.ok && !res.token.isNullOrBlank() ->
-                                        saveSession(res.token, res.expiresAt, res.email)
-                                    res.next == "set_password" -> {
-                                        step = Step.SetPassword
-                                        statusLine = "Create your password"
-                                    }
+                                    // MFA setup required (never accept password-only sessions).
                                     res.next == "mfa_setup" -> {
                                         val setup = authApi.mfaSetup(email, password)
                                         mfaSecret = setup.secret
                                         step = Step.MfaSetup
-                                        statusLine = "Set up 2FA"
+                                        statusLine = "Authenticator MFA required"
                                     }
                                     res.next == "mfa_verify" -> {
                                         mfaToken = res.mfaToken
                                         step = Step.MfaVerify
                                         statusLine = "Enter authenticator code"
                                     }
+                                    res.next == "set_password" -> {
+                                        step = Step.SetPassword
+                                        statusLine = "Create your password"
+                                    }
+                                    // Session only after MFA is already enrolled + verified.
+                                    res.ok && !res.token.isNullOrBlank() ->
+                                        saveSession(res.token, res.expiresAt, res.email)
                                     else -> error = res.error ?: "Login failed"
                                 }
                             }.onFailure { error = it.message }
