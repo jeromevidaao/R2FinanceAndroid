@@ -49,8 +49,8 @@ fun HomeScreen(
     LaunchedEffect(Unit) {
         val plan = container.ledger.ensureDefaultPlan()
         planName = plan.name.ifBlank { "R2Finance" }
+        // RAM aggregates only — cloud hydrate is process warmup, not per-tab.
         container.aggregates.start(plan.id)
-        container.syncCoordinator.ensureHydrated(plan.id)
     }
 
     // Precomputed balances / inbox count from LedgerAggregatesStore.

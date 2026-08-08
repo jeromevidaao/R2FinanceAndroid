@@ -45,6 +45,13 @@ class SyncCoordinator(
     private val _pendingCount = MutableStateFlow(0)
     val pendingCount: StateFlow<Int> = _pendingCount.asStateFlow()
 
+    /**
+     * Process-scoped coalesce: warmup + ConnectivityMonitor cold-start both
+     * fire hydrate; tab screens must not. Skip a second silent delta if one
+     * just finished and Room already has data.
+     */
+    private var lastBackgroundSyncAtMs: Long = 0L
+
     fun syncCursor(): Long = prefs.getLong(KEY_SYNC_CURSOR, 0L)
 
     fun lastFullSyncAt(): Long = prefs.getLong(KEY_LAST_FULL_SYNC_AT, 0L)
@@ -57,19 +64,24 @@ class SyncCoordinator(
     }
 
     /**
-     * Local-first entry: show Room immediately; full-hydrate only when empty.
+     * Local-first entry (call from process warmup, not every bottom-nav tab):
+     * show Room immediately; full-hydrate only when empty.
      * When data exists: push pending + lightweight delta (or silent full if due).
+     * Coalesces with [syncWhenOnline] so cold-start does not double-pull.
      */
     suspend fun ensureHydrated(planId: String = DEFAULT_PLAN_ID): Result<CloudSyncReport?> =
         mutex.withLock {
             refreshLocalDataFlag(planId)
+            if (shouldCoalesceBackgroundSync()) {
+                return@withLock Result.success(null)
+            }
             if (!_hasLocalData.value) {
                 return@withLock doPullLocked(
                     planId = planId,
                     requestServerTick = false,
                     forceFull = true,
                     showBusy = true,
-                )
+                ).also { markBackgroundSyncAttempt() }
             }
             // Already have data — push offline work + delta (or silent full if due).
             doPushThenPullLocked(
@@ -77,31 +89,47 @@ class SyncCoordinator(
                 requestServerTick = false,
                 forceFull = shouldFullSync(),
                 showBusy = false,
-            )
+            ).also { markBackgroundSyncAttempt() }
         }
 
     /**
      * Called when network becomes available (or app cold-start online).
      * Push offline queue → DDB, then **delta** pull (full only if due / empty).
+     * Coalesced with [ensureHydrated] so process start runs one silent sync.
      */
     suspend fun syncWhenOnline(planId: String = DEFAULT_PLAN_ID): Result<CloudSyncReport?> =
         mutex.withLock {
             refreshLocalDataFlag(planId)
+            if (shouldCoalesceBackgroundSync()) {
+                return@withLock Result.success(null)
+            }
             if (!_hasLocalData.value) {
                 return@withLock doPullLocked(
                     planId = planId,
                     requestServerTick = false,
                     forceFull = true,
                     showBusy = true,
-                )
+                ).also { markBackgroundSyncAttempt() }
             }
             doPushThenPullLocked(
                 planId = planId,
                 requestServerTick = false,
                 forceFull = shouldFullSync(),
                 showBusy = false,
-            )
+            ).also { markBackgroundSyncAttempt() }
         }
+
+    private fun shouldCoalesceBackgroundSync(): Boolean {
+        if (!_hasLocalData.value) return false
+        // Always flush offline queue — never coalesce past PENDING_PUSH.
+        if (_pendingCount.value > 0) return false
+        if (lastBackgroundSyncAtMs <= 0L) return false
+        return System.currentTimeMillis() - lastBackgroundSyncAtMs < BACKGROUND_SYNC_COALESCE_MS
+    }
+
+    private fun markBackgroundSyncAttempt() {
+        lastBackgroundSyncAtMs = System.currentTimeMillis()
+    }
 
     /**
      * After local categorize/approve: flush PENDING_PUSH only.
@@ -271,5 +299,11 @@ class SyncCoordinator(
         private const val KEY_LAST_FULL_SYNC_AT = "last_full_sync_at"
         /** Silent full resync interval to heal drift without daily megabyte pulls. */
         const val FULL_SYNC_INTERVAL_MS: Long = 24L * 60L * 60L * 1000L
+        /**
+         * Warmup + cold-start ConnectivityMonitor both request a silent sync.
+         * Skip a second pull within this window when Room already has data.
+         * Manual [refresh] always runs (separate code path).
+         */
+        const val BACKGROUND_SYNC_COALESCE_MS: Long = 30_000L
     }
 }

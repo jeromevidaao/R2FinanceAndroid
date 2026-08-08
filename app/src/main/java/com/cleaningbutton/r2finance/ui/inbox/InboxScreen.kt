@@ -66,10 +66,11 @@ import kotlinx.coroutines.launch
  * - vertical category color rail along each group
  * - multi-select → Approve / Categorize (local-first, silent background push)
  *
- * **Local-first:** list comes from process-scoped [AppContainer.inboxCache] (Room),
- * so tab switches never flash empty while waiting on HTTP. Background work is
- * delta-only via [SyncCoordinator.ensureHydrated]; full inbox API heal is manual
- * refresh only.
+ * **Local-first / paint cache immediately:**
+ * List comes from process-scoped [AppContainer.inboxCache] (Room → RAM).
+ * Tab enter only re-binds the cache — no [SyncCoordinator.ensureHydrated]
+ * (that runs once at process warmup). Full inbox API heal is manual refresh only.
+ * Never full-screen-block on background [SyncCoordinator.isSyncing].
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -83,19 +84,15 @@ fun InboxScreen(container: AppContainer) {
     var refreshMessage by remember { mutableStateOf<String?>(null) }
 
     val sync = container.syncCoordinator
-    val hydrating by sync.isSyncing.collectAsStateWithLifecycle()
     val items by container.inboxCache.rows.collectAsStateWithLifecycle()
     val inboxReady by container.inboxCache.ready.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
         val plan = container.ledger.ensureDefaultPlan()
         planId = plan.id
-        // Paint Room immediately (cache survives tab dispose/recreate).
+        // Paint RAM/Room immediately (cache survives tab dispose/recreate).
+        // Do not hydrate here — process warmup + reconnect already do that.
         container.inboxCache.start(plan.id)
-        // Silent background delta only — never blank the list; no pullInbox on enter.
-        if (container.connectivityMonitor.online.value) {
-            runCatching { sync.ensureHydrated(plan.id) }
-        }
     }
 
     LaunchedEffect(items) {
@@ -106,7 +103,7 @@ fun InboxScreen(container: AppContainer) {
     }
 
     fun refreshInbox() {
-        if (inboxRefreshing || hydrating) return
+        if (inboxRefreshing) return
         scope.launch {
             inboxRefreshing = true
             refreshMessage = "Refreshing…"
@@ -119,7 +116,7 @@ fun InboxScreen(container: AppContainer) {
             }.onFailure {
                 refreshMessage = "Sync failed: ${it.message}"
             }
-            runCatching { sync.ensureHydrated(planId) }
+            runCatching { sync.refresh(planId) }
             inboxRefreshing = false
         }
     }
@@ -313,8 +310,9 @@ fun InboxScreen(container: AppContainer) {
                     }
                 }
             }
-            !inboxReady || inboxRefreshing || hydrating -> {
-                // No cache yet — loading, never "All clear".
+            !inboxReady || (inboxRefreshing && items.isEmpty()) -> {
+                // First Room emit not yet (or empty + manual refresh). Never
+                // gate on background isSyncing — that caused tab-switch spinner.
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -332,7 +330,7 @@ fun InboxScreen(container: AppContainer) {
                 }
             }
             else -> {
-                // inboxReady && items empty && not busy
+                // inboxReady && items empty (background sync may still be running)
                 Column(
                     modifier = Modifier
                         .fillMaxSize()

@@ -65,8 +65,12 @@ class AppContainer(context: Context) {
     val inboxCache: InboxCache = InboxCache(ledger, applicationScope)
 
     /**
-     * Warm aggregates + hydrate flag as soon as the process starts so Home/Reflect
-     * open with precomputed numbers instead of scanning the ledger on the UI thread.
+     * Process start only (not per-tab):
+     * 1. Paint-ready RAM: aggregates + Categorization list from Room
+     * 2. One silent cloud hydrate (delta, or full if Room empty)
+     *
+     * Screens must **not** re-call [SyncCoordinator.ensureHydrated] on bottom-nav
+     * enter — tab switches should only collect process-scoped StateFlows.
      */
     fun startBackgroundWarmup() {
         applicationScope.launch {
@@ -74,7 +78,7 @@ class AppContainer(context: Context) {
             aggregates.start(plan.id)
             // Room Categorization list ready before first tab open (no empty flash).
             inboxCache.start(plan.id)
-            // Local Room first; silent delta (or full only if empty).
+            // Single process hydrate; ConnectivityMonitor handles reconnect later.
             syncCoordinator.ensureHydrated(plan.id)
         }
     }

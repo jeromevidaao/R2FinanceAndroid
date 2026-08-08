@@ -62,8 +62,8 @@ fun SpendingBreakdownScreen(
 
     LaunchedEffect(Unit) {
         val planId = container.ledger.ensureDefaultPlan().id
+        // RAM only — no per-screen cloud hydrate.
         container.aggregates.start(planId)
-        container.syncCoordinator.ensureHydrated(planId)
     }
 
     val agg by container.aggregates.state.collectAsStateWithLifecycle()

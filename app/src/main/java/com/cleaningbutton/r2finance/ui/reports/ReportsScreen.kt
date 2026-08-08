@@ -66,8 +66,8 @@ fun ReportsScreen(
 ) {
     LaunchedEffect(Unit) {
         val planId = container.ledger.ensureDefaultPlan().id
+        // Paint process-scoped aggregates; hydrate once at app start, not per tab.
         container.aggregates.start(planId)
-        container.syncCoordinator.ensureHydrated(planId)
     }
 
     // Precomputed on Default in LedgerAggregatesStore — no main-thread scan.
