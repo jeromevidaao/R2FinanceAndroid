@@ -154,6 +154,8 @@ jobs:
         if: steps.signing.outputs.has_signing == 'true' && github.ref == 'refs/heads/main'
         env:
           APK_PATH: ${{ steps.apk.outputs.path }}
+          # Multi-line safe — never expand commit message via shell interpolation
+          RELEASE_NOTES: ${{ github.event.head_commit.message }}
         run: |
           set -euo pipefail
           DEST_PREFIX="s3://cleansite/r2finance-builds"
@@ -168,7 +170,6 @@ jobs:
             --content-type application/vnd.android.package-archive \
             --cache-control "no-cache"
           export LATEST_URL="$PUBLIC_BASE/R2Finance-latest.apk"
-          export RELEASE_NOTES="${{ github.event.head_commit.message }}"
           export VERSION_JSON_OUT=/tmp/version.json
           export HISTORY_JSON_OUT=/tmp/history.json
           aws s3 cp "$DEST_PREFIX/history.json" /tmp/prev-history.json \
