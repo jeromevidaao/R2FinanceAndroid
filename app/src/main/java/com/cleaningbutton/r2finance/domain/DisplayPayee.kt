@@ -127,6 +127,12 @@ object DisplayPayee {
         if (Regex("""standard\s+transfer""", RegexOption.IGNORE_CASE).containsMatchIn(t)) {
             return true
         }
+        // Bare Venmo notes ("Fire wood") — reject ALL-CAPS merchant labels
+        if (t.length <= 80 && t.any { it.isLowerCase() } &&
+            !Regex("""^[A-Z0-9\s#&.'/-]+$""").matches(t)
+        ) {
+            return true
+        }
         return false
     }
 
