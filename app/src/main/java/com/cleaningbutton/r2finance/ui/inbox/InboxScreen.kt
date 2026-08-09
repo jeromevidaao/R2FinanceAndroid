@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -48,6 +49,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.cleaningbutton.r2finance.domain.GoogleMaps
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -506,6 +509,8 @@ private fun InboxTxnRow(
                     payeeLabel,
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 Row(
                     modifier = Modifier.padding(top = 3.dp),
@@ -515,9 +520,8 @@ private fun InboxTxnRow(
                     CategoryChip(model = chip)
                     Text(
                         buildString {
+                            // Categorization page — no "Needs approval" (implicit).
                             append(row.accountName ?: "Account")
-                            append(" · ")
-                            append(approvalStatusLabel(txn.approved))
                             val loc = txn.locationDisplay
                             if (!loc.isNullOrBlank()) {
                                 append(" · ")
@@ -532,6 +536,8 @@ private fun InboxTxnRow(
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
                     )
                     if (mapsUrl != null) {
@@ -551,6 +557,8 @@ private fun InboxTxnRow(
                         it,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
@@ -559,12 +567,14 @@ private fun InboxTxnRow(
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.SemiBold,
                 color = amountColor,
-                modifier = Modifier.padding(end = 12.dp),
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Visible,
+                modifier = Modifier
+                    .padding(start = 8.dp, end = 12.dp)
+                    .widthIn(min = 88.dp),
+                textAlign = TextAlign.End,
             )
         }
     }
 }
-
-/** Status UI = YNAB `approved` (not bank cleared / uncleared / reconciled). */
-private fun approvalStatusLabel(approved: Boolean): String =
-    if (approved) "Approved" else "Needs approval"

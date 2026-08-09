@@ -36,8 +36,8 @@ android {
         applicationId = "com.cleaningbutton.r2finance"
         minSdk = 26
         targetSdk = 35
-        versionCode = 52
-        versionName = "0.9.23"
+        versionCode = 53
+        versionName = "0.9.24"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField(
