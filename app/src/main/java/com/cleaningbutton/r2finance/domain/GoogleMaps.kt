@@ -80,11 +80,24 @@ object GoogleMaps {
         return union > 0 && hit.toDouble() / union >= 0.5
     }
 
+    /** True when a comma-head looks like a business/POI, not a city name. */
+    fun looksLikeBusinessName(s: String?): Boolean {
+        val t = s?.trim().orEmpty()
+        if (t.isEmpty() || isStreetAddress(t)) return false
+        val lower = t.lowercase()
+        if (GENERIC_PLACE_WORDS.any { lower.contains(it) }) return true
+        // "Sister's …" / "Joe's …" style POI labels
+        if (Regex("""\b\w+'s\b""", RegexOption.IGNORE_CASE).containsMatchIn(t)) return true
+        return false
+    }
+
     /**
      * If [locationDisplay] starts with a POI name that does not match [payee],
      * drop that head and keep the geographic tail (city, region, …).
      * "Sister's cafe, Bellevue, WA, 98005, US" + payee Don's Cafe
      * → "Bellevue, WA, 98005, US"
+     *
+     * Never strip bare city heads ("Seattle, WA") — those are geography.
      */
     fun cleanPlaceForPayee(payee: String?, locationDisplay: String?): String? {
         val place = locationDisplay?.trim().orEmpty()
@@ -93,15 +106,15 @@ object GoogleMaps {
         if (name.isEmpty()) return place
         if (placeNameRelated(name, place)) return place
 
-        // Split on comma: first segment is often a wrong POI name.
         val parts = place.split(',').map { it.trim() }.filter { it.isNotEmpty() }
         if (parts.size < 2) return place
 
         val head = parts.first()
-        // Keep head only if street-like or related to payee.
-        val keepHead = isStreetAddress(head) || placeNameRelated(name, head)
-        val tail = if (keepHead) parts else parts.drop(1)
-        val cleaned = tail.joinToString(", ").trim()
+        // Only strip business-like POI heads; keep "Bellevue, WA" / "Seattle, WA".
+        if (!looksLikeBusinessName(head)) return place
+        if (placeNameRelated(name, head) || isStreetAddress(head)) return place
+
+        val cleaned = parts.drop(1).joinToString(", ").trim()
         return cleaned.takeIf { isPlaceLabel(it) } ?: place
     }
 
