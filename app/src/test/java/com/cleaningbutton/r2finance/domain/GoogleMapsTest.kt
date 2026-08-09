@@ -1,12 +1,25 @@
 package com.cleaningbutton.r2finance.domain
 
 import com.cleaningbutton.r2finance.data.local.entity.TransactionEntity
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GoogleMapsTest {
+
+    @Test
+    fun coordinate_query_detection() {
+        assertTrue(GoogleMaps.isCoordinateQuery("47.6,-122.3"))
+        assertTrue(GoogleMaps.isCoordinateQuery("47.6062, -122.3321"))
+        assertFalse(GoogleMaps.isCoordinateQuery("Seattle, WA"))
+        assertFalse(GoogleMaps.isCoordinateQuery("123 Main St"))
+        assertFalse(GoogleMaps.isPlaceLabel(null))
+        assertFalse(GoogleMaps.isPlaceLabel("  "))
+        assertFalse(GoogleMaps.isPlaceLabel("47.0, -122.0"))
+        assertTrue(GoogleMaps.isPlaceLabel("Portland, OR"))
+    }
 
     @Test
     fun search_url_null_without_place() {
@@ -20,6 +33,22 @@ class GoogleMapsTest {
             GoogleMaps.searchUrl(
                 payee = "Voyager Cafe",
                 locationDisplay = "   ",
+            ),
+        )
+    }
+
+    @Test
+    fun search_url_null_for_coords_only_label() {
+        assertNull(
+            GoogleMaps.searchUrl(
+                payee = "Voyager Cafe",
+                locationDisplay = "47.6,-122.3",
+            ),
+        )
+        assertNull(
+            GoogleMaps.searchUrl(
+                payee = "Voyager Cafe",
+                locationDisplay = "47.6062, -122.3321",
             ),
         )
     }
@@ -66,6 +95,20 @@ class GoogleMapsTest {
             plaidMerchantName = "Don's Cafe",
         )
         assertNull(GoogleMaps.urlForTxn(txn, "Don's Cafe"))
+    }
+
+    @Test
+    fun no_url_for_coords_only_location_display() {
+        val txn = TransactionEntity(
+            id = "t4",
+            planId = "p",
+            accountId = "a",
+            date = "2026-08-01",
+            amountMilli = -5000,
+            locationDisplay = "37.7749, -122.4194",
+            plaidMerchantName = "Some Cafe",
+        )
+        assertNull(GoogleMaps.urlForTxn(txn, "Some Cafe"))
     }
 
     @Test

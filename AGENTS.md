@@ -10,5 +10,6 @@
 - **Home Accounts total:** prefer `AccountEntity.balanceMilli` from cloud/YNAB (same as website `a.balance`). Summing Room transactions is a fallback only when balance has never been synced.
 - Keep entity field `ynabId` — it is the stable remote/DDB key name from the API, not an on-device YNAB client.
 - **Always commit + push** after finished work; watch CI green before claiming OTA shipped.
-- OTA prefix: `r2finance-builds/` — not Play Store.
+- OTA prefix: `r2finance-builds/` — not Play Store. Prefer bumping `versionCode` + `versionName` in the same commit as shippable app changes; CI **auto-bumps** `versionCode` (and patch `versionName`) if local ≤ published so OTA never fails solely on a missed bump.
+- **Maps links:** only when `locationDisplay` is a real place label — never bare lat/lon coordinates (see `GoogleMaps`).
 - Never commit YNAB PATs or keystores.
