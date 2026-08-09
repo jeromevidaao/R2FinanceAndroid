@@ -505,13 +505,33 @@ private fun InboxTxnRow(
                 onCheckedChange = { onToggleSelect() },
             )
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    payeeLabel,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                // Payee then Amount on the same line (Amount right after Payee).
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        payeeLabel,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        Money.format(txn.amountMilli),
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = amountColor,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Visible,
+                        modifier = Modifier
+                            .padding(start = 8.dp, end = 4.dp)
+                            .widthIn(min = 88.dp),
+                        textAlign = TextAlign.End,
+                    )
+                }
                 Row(
                     modifier = Modifier.padding(top = 3.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -562,19 +582,6 @@ private fun InboxTxnRow(
                     )
                 }
             }
-            Text(
-                Money.format(txn.amountMilli),
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = amountColor,
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Visible,
-                modifier = Modifier
-                    .padding(start = 8.dp, end = 12.dp)
-                    .widthIn(min = 88.dp),
-                textAlign = TextAlign.End,
-            )
         }
     }
 }
