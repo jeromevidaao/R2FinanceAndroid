@@ -105,6 +105,8 @@ data class CloudTransaction(
     /** Plaid enrichment from cloud (optional). */
     val plaidTransactionId: String? = null,
     val plaidMerchantName: String? = null,
+    val plaidName: String? = null,
+    val plaidDescription: String? = null,
     val plaidPaymentChannel: String? = null,
     val plaidPfc: String? = null,
     /** "City, ST" (US) or "City, Country" (intl). */

@@ -558,6 +558,8 @@ class CloudSync(
             deleted = deleted || t.deleted,
             plaidTransactionId = t.plaidTransactionId,
             plaidMerchantName = t.plaidMerchantName,
+            plaidName = t.plaidName,
+            plaidDescription = t.plaidDescription,
             plaidPaymentChannel = t.plaidPaymentChannel,
             plaidPfc = t.plaidPfc,
             locationDisplay = t.locationDisplay,

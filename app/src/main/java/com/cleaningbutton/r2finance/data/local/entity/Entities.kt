@@ -212,6 +212,10 @@ data class TransactionEntity(
     /** Plaid match id when cloud enrichment linked this spend. */
     val plaidTransactionId: String? = null,
     val plaidMerchantName: String? = null,
+    /** Raw Plaid name (Venmo: Person "note"). */
+    val plaidName: String? = null,
+    /** Venmo Personal note as "Person - note". */
+    val plaidDescription: String? = null,
     val plaidPaymentChannel: String? = null,
     val plaidPfc: String? = null,
     /**

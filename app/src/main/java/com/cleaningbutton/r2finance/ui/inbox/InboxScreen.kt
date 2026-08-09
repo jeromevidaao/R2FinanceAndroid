@@ -52,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.cleaningbutton.r2finance.domain.DisplayPayee
 import com.cleaningbutton.r2finance.domain.GoogleMaps
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cleaningbutton.r2finance.R
@@ -582,15 +583,26 @@ private fun InboxTxnRow(
                         buildString {
                             // Categorization page — no "Needs approval" (implicit).
                             append(row.accountName ?: "Account")
-                            val loc = txn.locationDisplay
-                            if (!loc.isNullOrBlank()) {
+                            val desc = DisplayPayee.venmoDescriptionLabel(
+                                txn.plaidDescription,
+                                txn.plaidName,
+                                txn.plaidMerchantName,
+                            )
+                            if (!desc.isNullOrBlank()) {
+                                // Ruby BoA · Person - note (status implicit on this page)
                                 append(" · ")
-                                append(loc)
+                                append(desc)
                             } else {
-                                val pfc = txn.plaidPfc
-                                if (!pfc.isNullOrBlank()) {
+                                val loc = txn.locationDisplay
+                                if (!loc.isNullOrBlank()) {
                                     append(" · ")
-                                    append(pfc)
+                                    append(loc)
+                                } else {
+                                    val pfc = txn.plaidPfc
+                                    if (!pfc.isNullOrBlank()) {
+                                        append(" · ")
+                                        append(pfc)
+                                    }
                                 }
                             }
                         },

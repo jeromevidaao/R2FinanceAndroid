@@ -102,6 +102,45 @@ object DisplayPayee {
         return s.ifEmpty { null }
     }
 
+    fun isGenericVenmoPayee(text: String?): Boolean {
+        val s = text?.trim().orEmpty()
+        if (s.isEmpty()) return false
+        if (s.equals("venmo", ignoreCase = true)) return true
+        if (
+            s.startsWith("venmo", ignoreCase = true) &&
+            Regex("""payment|cashout|des:|web id|ppd|orig""", RegexOption.IGNORE_CASE)
+                .containsMatchIn(s)
+        ) {
+            return true
+        }
+        return false
+    }
+
+    /**
+     * Venmo Personal note for UI: "Person - note".
+     * Only Venmo-style labels (quoted note or stamped "Name - note").
+     */
+    fun venmoDescriptionLabel(
+        plaidDescription: String?,
+        plaidName: String?,
+        plaidMerchantName: String?,
+    ): String? {
+        val d = plaidDescription?.trim()
+        if (!d.isNullOrEmpty() && !isGenericVenmoPayee(d)) return d
+        for (raw in listOf(plaidName, plaidMerchantName)) {
+            if (raw.isNullOrBlank() || isGenericVenmoPayee(raw)) continue
+            val s = raw.trim()
+            val m = Regex("""^(.+?)\s+["“](.+?)["”]\s*$""").find(s)
+            if (m != null) {
+                return "${m.groupValues[1].trim()} - ${m.groupValues[2].trim()}"
+            }
+            if (Regex("""\s-\s""").containsMatchIn(s) && !s.startsWith("venmo", ignoreCase = true)) {
+                return s
+            }
+        }
+        return null
+    }
+
     /**
      * @return human payee or null when nothing known (UI shows "No payee" / "—")
      */
@@ -112,13 +151,23 @@ object DisplayPayee {
         plaidPfc: String?,
         importPayeeRaw: String?,
         accounts: List<AccountEntity>,
+        plaidName: String? = null,
+        plaidDescription: String? = null,
     ): String? {
-        if (!namedPayee.isNullOrBlank()) return namedPayee.trim()
+        val named = namedPayee?.trim()?.takeIf { it.isNotEmpty() }
+        val venmoLabel = venmoDescriptionLabel(plaidDescription, plaidName, plaidMerchantName)
+        if (named != null && isGenericVenmoPayee(named) && venmoLabel != null) {
+            return venmoLabel
+        }
+        if (named != null) return named
         if (!transferAccountName.isNullOrBlank()) {
             return "Transfer : ${transferAccountName.trim()}"
         }
 
         val importPayeeName = parseImportPayeeName(importPayeeRaw)
+        if (isGenericVenmoPayee(importPayeeName) && venmoLabel != null) {
+            return venmoLabel
+        }
         val ending = extractCardEnding(plaidMerchantName)
             ?: extractCardEnding(importPayeeName)
 
@@ -134,6 +183,7 @@ object DisplayPayee {
             return formatCreditPaymentPayee(ending, accounts)
         }
 
+        if (venmoLabel != null) return venmoLabel
         cleanPlaidMerchantName(plaidMerchantName)?.let { return it }
         if (!importPayeeName.isNullOrBlank()) return importPayeeName
         return null
@@ -154,6 +204,8 @@ object DisplayPayee {
             plaidPfc = txn.plaidPfc,
             importPayeeRaw = txn.importPayeeName,
             accounts = accounts,
+            plaidName = txn.plaidName,
+            plaidDescription = txn.plaidDescription,
         )
     }
 }

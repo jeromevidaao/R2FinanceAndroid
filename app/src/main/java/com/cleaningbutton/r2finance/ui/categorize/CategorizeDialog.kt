@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import com.cleaningbutton.r2finance.data.AppContainer
 import com.cleaningbutton.r2finance.data.local.entity.CategoryEntity
 import com.cleaningbutton.r2finance.data.repository.TransactionRow
+import com.cleaningbutton.r2finance.domain.DisplayPayee
 import com.cleaningbutton.r2finance.domain.GoogleMaps
 import com.cleaningbutton.r2finance.domain.Money
 import com.cleaningbutton.r2finance.domain.RelativeDate
@@ -141,12 +142,33 @@ fun CategorizeDialog(
                         val net = targets.sumOf { it.txn.amountMilli }
                         "${targets.size} selected · net ${Money.format(net)}"
                     } else {
-                        buildString {
-                            append(single?.payeeName ?: "No payee")
-                            append(" · ")
-                            append(RelativeDate.formatFriendly(single?.txn?.date))
-                            append(" · ")
-                            append(Money.format(single?.txn?.amountMilli ?: 0L))
+                        val t = single?.txn
+                        val desc = t?.let {
+                            DisplayPayee.venmoDescriptionLabel(
+                                it.plaidDescription,
+                                it.plaidName,
+                                it.plaidMerchantName,
+                            )
+                        }
+                        if (!desc.isNullOrBlank() && t != null) {
+                            // Ruby BoA · 2026/06/16 · Needs approval - Person - note
+                            buildString {
+                                append(single?.accountName ?: "Account")
+                                append(" · ")
+                                append(t.date.replace('-', '/'))
+                                append(" · ")
+                                append(if (t.approved) "Approved" else "Needs approval")
+                                append(" - ")
+                                append(desc)
+                            }
+                        } else {
+                            buildString {
+                                append(single?.payeeName ?: "No payee")
+                                append(" · ")
+                                append(RelativeDate.formatFriendly(single?.txn?.date))
+                                append(" · ")
+                                append(Money.format(single?.txn?.amountMilli ?: 0L))
+                            }
                         }
                     },
                     style = MaterialTheme.typography.bodySmall,

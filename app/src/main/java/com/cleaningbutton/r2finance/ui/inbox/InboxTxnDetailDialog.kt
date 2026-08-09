@@ -23,6 +23,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.cleaningbutton.r2finance.data.AppContainer
 import com.cleaningbutton.r2finance.data.repository.TransactionRow
+import com.cleaningbutton.r2finance.domain.DisplayPayee
 import com.cleaningbutton.r2finance.domain.GoogleMaps
 import com.cleaningbutton.r2finance.domain.Money
 import com.cleaningbutton.r2finance.domain.RelativeDate
@@ -109,11 +110,21 @@ fun InboxTxnDetailDialog(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     buildString {
+                        // Ruby BoA · 2026/06/16 · Needs approval - Person - note
                         append(row.accountName ?: "Account")
                         append(" · ")
-                        append(RelativeDate.formatFriendly(txn.date))
+                        append(txn.date.replace('-', '/'))
                         append(" · ")
                         append(if (txn.approved) "Approved" else "Needs approval")
+                        val desc = DisplayPayee.venmoDescriptionLabel(
+                            txn.plaidDescription,
+                            txn.plaidName,
+                            txn.plaidMerchantName,
+                        )
+                        if (!desc.isNullOrBlank()) {
+                            append(" - ")
+                            append(desc)
+                        }
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
