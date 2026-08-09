@@ -573,6 +573,14 @@ class CloudSync(
                 ?.joinToString(" | ")
                 ?.takeIf { it.isNotEmpty() },
             amazonItemsSummary = t.amazonItemsSummary,
+            amazonShipCity = t.amazonShipCity,
+            amazonShipState = t.amazonShipState,
+            amazonShipLocation = t.amazonShipLocation
+                ?: listOfNotNull(
+                    t.amazonShipCity?.trim()?.takeIf { it.isNotEmpty() },
+                    t.amazonShipState?.trim()?.takeIf { it.isNotEmpty() },
+                ).takeIf { it.isNotEmpty() }
+                    ?.joinToString(", "),
         )
     }
 

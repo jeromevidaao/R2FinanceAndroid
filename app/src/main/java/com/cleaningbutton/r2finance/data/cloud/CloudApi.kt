@@ -117,6 +117,10 @@ data class CloudTransaction(
     val amazonOrderUrl: String? = null,
     val amazonItems: List<String>? = null,
     val amazonItemsSummary: String? = null,
+    val amazonShipCity: String? = null,
+    val amazonShipState: String? = null,
+    /** Formatted "City, ST" delivery place. */
+    val amazonShipLocation: String? = null,
     val amazonMatchMethod: String? = null,
 ) {
     /** Room / local primary key preference. */

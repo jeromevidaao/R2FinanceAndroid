@@ -230,7 +230,10 @@ object DisplayPayee {
         return enhanceAmazon(base, txn)
     }
 
-    /** Append matched Amazon item titles to the payee label. */
+    /**
+     * Append matched Amazon item titles + delivery city/state to the payee label.
+     * e.g. "AMAZON MKTPL*LR52S7I73 — USB-C Cable · Portland, ME"
+     */
     fun enhanceAmazon(base: String?, txn: TransactionEntity): String? {
         val summary = txn.amazonItemsSummary?.trim()?.takeIf { it.isNotEmpty() }
             ?: txn.amazonItemsJoined
@@ -240,10 +243,27 @@ object DisplayPayee {
                 ?.take(3)
                 ?.joinToString(", ")
                 ?.takeIf { it.isNotEmpty() }
-        if (summary.isNullOrBlank()) return base
+        val loc = txn.amazonShipLocation?.trim()?.takeIf { it.isNotEmpty() }
+            ?: listOfNotNull(
+                txn.amazonShipCity?.trim()?.takeIf { it.isNotEmpty() },
+                txn.amazonShipState?.trim()?.takeIf { it.isNotEmpty() },
+            ).takeIf { it.isNotEmpty() }?.joinToString(", ")
+        if (summary.isNullOrBlank() && loc.isNullOrBlank()) return base
         val label = base?.trim()?.takeIf { it.isNotEmpty() } ?: "Amazon"
-        if (label.contains(summary)) return label
-        if (label.contains(" — ") && label.contains("amazon", ignoreCase = true)) return label
-        return "$label — $summary"
+        val hasSummary = !summary.isNullOrBlank() && label.contains(summary)
+        val hasLoc = !loc.isNullOrBlank() && label.contains(loc)
+        if (hasSummary && (hasLoc || loc.isNullOrBlank())) return label
+        if (hasLoc && summary.isNullOrBlank()) return label
+        // Already enhanced with items — append location only.
+        if (label.contains(" — ") && label.contains("amazon", ignoreCase = true)) {
+            if (!loc.isNullOrBlank() && !label.contains(loc)) return "$label · $loc"
+            return label
+        }
+        return when {
+            !summary.isNullOrBlank() && !loc.isNullOrBlank() ->
+                "$label — $summary · $loc"
+            !summary.isNullOrBlank() -> "$label — $summary"
+            else -> "$label · $loc"
+        }
     }
 }

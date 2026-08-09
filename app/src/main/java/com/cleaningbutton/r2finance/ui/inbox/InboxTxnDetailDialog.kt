@@ -140,6 +140,15 @@ fun InboxTxnDetailDialog(
                                 append(" · ")
                                 append(it)
                             }
+                            val ship = txn.amazonShipLocation?.takeIf { it.isNotBlank() }
+                                ?: listOfNotNull(
+                                    txn.amazonShipCity?.takeIf { it.isNotBlank() },
+                                    txn.amazonShipState?.takeIf { it.isNotBlank() },
+                                ).takeIf { it.isNotEmpty() }?.joinToString(", ")
+                            ship?.let {
+                                append(" · 📦 ")
+                                append(it)
+                            }
                         },
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.SemiBold,

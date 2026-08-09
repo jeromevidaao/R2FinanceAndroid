@@ -230,6 +230,10 @@ data class TransactionEntity(
     /** Pipe-joined item titles for Room simplicity. */
     val amazonItemsJoined: String? = null,
     val amazonItemsSummary: String? = null,
+    /** Delivery city/state from Amazon order address ("City, ST"). */
+    val amazonShipCity: String? = null,
+    val amazonShipState: String? = null,
+    val amazonShipLocation: String? = null,
 )
 
 @Entity(
