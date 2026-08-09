@@ -21,6 +21,11 @@ import kotlinx.coroutines.sync.withLock
  *
  * Day-to-day HTTP stays light: [KEY_SYNC_CURSOR] drives GET /v1/sync/changes?since=…
  * Silent full resync every [FULL_SYNC_INTERVAL_MS] avoids long-term drift.
+ *
+ * **Empty-ledger recovery:** accounts alone do not count as a usable ledger.
+ * Zero live transactions always force a full hydrate (and never coalesce), so a
+ * botched prune / pre-login failed pull / reinstall cannot leave Categorization
+ * "All clear" and Reflect "No transactions" while the cloud still has thousands.
  */
 class SyncCoordinator(
     context: Context,
@@ -45,10 +50,13 @@ class SyncCoordinator(
     private val _pendingCount = MutableStateFlow(0)
     val pendingCount: StateFlow<Int> = _pendingCount.asStateFlow()
 
+    /** Live (non-deleted) Room transaction count for empty-ledger recovery. */
+    private var liveTxnCount: Int = 0
+
     /**
      * Process-scoped coalesce: warmup + ConnectivityMonitor cold-start both
      * fire hydrate; tab screens must not. Skip a second silent delta if one
-     * just finished and Room already has data.
+     * just finished and Room already has a real ledger.
      */
     private var lastBackgroundSyncAtMs: Long = 0L
 
@@ -59,13 +67,22 @@ class SyncCoordinator(
     suspend fun refreshLocalDataFlag(planId: String = DEFAULT_PLAN_ID) {
         val accounts = db.accountDao().countOpen(planId)
         val txns = db.transactionDao().countForPlan(planId)
+        liveTxnCount = txns
+        // UI "has something" can still be accounts-only; hydrate logic uses [needsFullHydrate].
         _hasLocalData.value = accounts > 0 || txns > 0
         _pendingCount.value = db.transactionDao().countPendingPush(planId)
     }
 
     /**
-     * Local-first entry (call from process warmup, not every bottom-nav tab):
-     * show Room immediately; full-hydrate only when empty.
+     * True when Room cannot paint Reflect / Categorization from a real ledger.
+     * Accounts without transactions are treated as empty (common after a failed
+     * full sync that landed meta rows only, or a prune without re-insert).
+     */
+    private fun needsFullHydrate(): Boolean = liveTxnCount <= 0
+
+    /**
+     * Local-first entry (call from process warmup + post-auth, not every tab):
+     * show Room immediately; full-hydrate when empty of transactions.
      * When data exists: push pending + lightweight delta (or silent full if due).
      * Coalesces with [syncWhenOnline] so cold-start does not double-pull.
      */
@@ -75,21 +92,21 @@ class SyncCoordinator(
             if (shouldCoalesceBackgroundSync()) {
                 return@withLock Result.success(null)
             }
-            if (!_hasLocalData.value) {
+            if (needsFullHydrate()) {
                 return@withLock doPullLocked(
                     planId = planId,
                     requestServerTick = false,
                     forceFull = true,
                     showBusy = true,
-                ).also { markBackgroundSyncAttempt() }
+                ).also { if (it.isSuccess) markBackgroundSyncAttempt() }
             }
-            // Already have data — push offline work + delta (or silent full if due).
+            // Already have a real ledger — push offline work + delta (or silent full if due).
             doPushThenPullLocked(
                 planId = planId,
                 requestServerTick = false,
                 forceFull = shouldFullSync(),
                 showBusy = false,
-            ).also { markBackgroundSyncAttempt() }
+            ).also { if (it.isSuccess) markBackgroundSyncAttempt() }
         }
 
     /**
@@ -103,23 +120,25 @@ class SyncCoordinator(
             if (shouldCoalesceBackgroundSync()) {
                 return@withLock Result.success(null)
             }
-            if (!_hasLocalData.value) {
+            if (needsFullHydrate()) {
                 return@withLock doPullLocked(
                     planId = planId,
                     requestServerTick = false,
                     forceFull = true,
                     showBusy = true,
-                ).also { markBackgroundSyncAttempt() }
+                ).also { if (it.isSuccess) markBackgroundSyncAttempt() }
             }
             doPushThenPullLocked(
                 planId = planId,
                 requestServerTick = false,
                 forceFull = shouldFullSync(),
                 showBusy = false,
-            ).also { markBackgroundSyncAttempt() }
+            ).also { if (it.isSuccess) markBackgroundSyncAttempt() }
         }
 
     private fun shouldCoalesceBackgroundSync(): Boolean {
+        // Never coalesce past an empty ledger — recovery must always run.
+        if (needsFullHydrate()) return false
         if (!_hasLocalData.value) return false
         // Always flush offline queue — never coalesce past PENDING_PUSH.
         if (_pendingCount.value > 0) return false
@@ -142,19 +161,21 @@ class SyncCoordinator(
         }
 
     /**
-     * Manual refresh (toolbar). Push pending → R2FinanceAPI/DDB, optional
-     * server bridge tick (AWS only), then pull delta/full from cloud.
-     * Never contacts YNAB from the phone.
+     * Manual refresh (toolbar / pull-to-refresh). Push pending → R2FinanceAPI/DDB,
+     * optional server bridge tick (AWS only), then pull delta/full from cloud.
+     * Empty local ledger always force-fulls so Categorization cannot stay stuck
+     * on "All clear" while the website shows needs-attention rows.
      */
     suspend fun refresh(
         planId: String = DEFAULT_PLAN_ID,
         forceFull: Boolean = false,
     ): Result<CloudSyncReport> =
         mutex.withLock {
+            refreshLocalDataFlag(planId)
             doPushThenPullLocked(
                 planId = planId,
                 requestServerTick = true,
-                forceFull = forceFull || shouldFullSync(),
+                forceFull = forceFull || needsFullHydrate() || shouldFullSync(),
                 showBusy = true,
             ).map { it!! }
         }
@@ -162,8 +183,8 @@ class SyncCoordinator(
     private fun shouldFullSync(): Boolean {
         val lastFull = lastFullSyncAt()
         // Missing lastFull (upgrade / first install with Room already filled) must NOT
-        // force a 6MB full pull that used to wipe-before-write and blank the UI.
-        // Empty Room still force-fulls via ensureHydrated / syncWhenOnline.
+        // force a multi-MB full pull that used to wipe-before-write and blank the UI.
+        // Empty Room still force-fulls via needsFullHydrate().
         if (lastFull <= 0L) return false
         return System.currentTimeMillis() - lastFull >= FULL_SYNC_INTERVAL_MS
     }
@@ -256,6 +277,21 @@ class SyncCoordinator(
                 if (showBusy) _statusMessage.value = step
             }
             markSyncedOk(planId, report)
+            // Still empty after a non-full pull → immediately force a full snapshot.
+            // Covers a stale cursor after Room was wiped without resetting prefs.
+            refreshLocalDataFlag(planId)
+            if (needsFullHydrate() && report.mode != "full") {
+                if (showBusy) _statusMessage.value = "Ledger empty — full sync from R2Finance…"
+                val fullReport = cloudSync.syncFromCloud(
+                    requestServerTick = false,
+                    since = 0L,
+                    forceFull = true,
+                ) { step ->
+                    if (showBusy) _statusMessage.value = step
+                }
+                markSyncedOk(planId, fullReport)
+                return Result.success(fullReport)
+            }
             Result.success(report)
         } catch (e: Exception) {
             if (showBusy) _statusMessage.value = "Sync failed: ${e.message}"
@@ -268,15 +304,28 @@ class SyncCoordinator(
     private suspend fun markSyncedOk(planId: String, report: CloudSyncReport) {
         val now = System.currentTimeMillis()
         val edit = prefs.edit().putLong(KEY_LAST_SYNCED_AT, now)
-        if (report.cursor > 0L) {
+        // Never advance the delta cursor after a full pack that applied zero
+        // transactions — that would strand the phone on empty-delta forever while
+        // the cloud still has the full ledger (and inbox).
+        val emptyFull = report.mode == "full" && report.transactions <= 0
+        if (!emptyFull && report.cursor > 0L) {
             edit.putLong(KEY_SYNC_CURSOR, report.cursor)
         }
         if (report.mode == "full") {
-            edit.putLong(KEY_LAST_FULL_SYNC_AT, now)
+            if (!emptyFull) {
+                edit.putLong(KEY_LAST_FULL_SYNC_AT, now)
+            } else {
+                // Keep lastFull unset/old so the next open retries full hydrate.
+                edit.putLong(KEY_LAST_FULL_SYNC_AT, 0L)
+            }
         } else if (lastFullSyncAt() <= 0L) {
             // Seed 24h heal clock after first successful delta so upgrades don't
-            // immediately re-download the whole ledger.
-            edit.putLong(KEY_LAST_FULL_SYNC_AT, now)
+            // immediately re-download the whole ledger — but only if we actually
+            // have live rows now.
+            refreshLocalDataFlag(planId)
+            if (!needsFullHydrate()) {
+                edit.putLong(KEY_LAST_FULL_SYNC_AT, now)
+            }
         }
         edit.apply()
         _lastSyncedAt.value = now
@@ -287,7 +336,9 @@ class SyncCoordinator(
                 val modeLabel = if (report.mode == "delta") "delta" else report.mode
                 append("Synced “${report.planName}” ($modeLabel): ")
                 append("${report.accounts} accounts, ${report.transactions} transactions")
+                if (report.inboxCount > 0) append(" · ${report.inboxCount} need attention")
                 if (pending > 0) append(" · $pending still pending upload")
+                if (emptyFull) append(" · empty full pack (will retry)")
             }
     }
 
@@ -301,7 +352,7 @@ class SyncCoordinator(
         const val FULL_SYNC_INTERVAL_MS: Long = 24L * 60L * 60L * 1000L
         /**
          * Warmup + cold-start ConnectivityMonitor both request a silent sync.
-         * Skip a second pull within this window when Room already has data.
+         * Skip a second pull within this window when Room already has a ledger.
          * Manual [refresh] always runs (separate code path).
          */
         const val BACKGROUND_SYNC_COALESCE_MS: Long = 30_000L

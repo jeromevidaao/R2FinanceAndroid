@@ -101,7 +101,7 @@ fun InboxScreen(container: AppContainer) {
         val plan = container.ledger.ensureDefaultPlan()
         planId = plan.id
         // Paint RAM/Room immediately (cache survives tab dispose/recreate).
-        // Do not hydrate here — process warmup + reconnect already do that.
+        // Do not hydrate here on every remount — process warmup + post-auth do that.
         container.inboxCache.start(plan.id)
     }
 
@@ -110,6 +110,46 @@ fun InboxScreen(container: AppContainer) {
         if (selectedIds.any { it !in live }) {
             selectedIds = selectedIds.intersect(live)
         }
+    }
+
+    // When Categorization is ready + empty, once per process, pull latest from
+    // R2Finance. Fixes cold login / wiped ledger leaving "All clear" while the
+    // website still shows needs-attention rows. Flag lives on InboxCache so tab
+    // remounts do not re-fire when the cloud is genuinely empty.
+    LaunchedEffect(inboxReady, items.isEmpty()) {
+        if (!inboxReady || items.isNotEmpty()) return@LaunchedEffect
+        if (container.inboxCache.emptyInboxHealAttempted) return@LaunchedEffect
+        if (!container.sessionStore.isSessionValid()) return@LaunchedEffect
+        if (!container.connectivityMonitor.online.value) return@LaunchedEffect
+        container.inboxCache.emptyInboxHealAttempted = true
+        val plan = container.ledger.ensureDefaultPlan()
+        planId = plan.id
+        inboxRefreshing = true
+        refreshMessage = "Checking R2Finance for items to categorize…"
+        val ledgerResult = sync.refresh(plan.id)
+        ledgerResult.onFailure {
+            refreshMessage = "Sync failed: ${it.message}"
+        }
+        val inboxResult = runCatching {
+            container.cloudSync.pullInbox { step -> refreshMessage = step }
+        }
+        inboxResult
+            .onSuccess { report ->
+                refreshMessage =
+                    if (report.inboxCount > 0) {
+                        "${report.inboxCount} need attention (${report.transactions} loaded)"
+                    } else {
+                        "Synced — nothing needs attention on R2Finance"
+                    }
+            }
+            .onFailure {
+                if (ledgerResult.isFailure) {
+                    refreshMessage = "Sync failed: ${it.message}"
+                } else {
+                    refreshMessage = "Inbox refresh failed: ${it.message}"
+                }
+            }
+        inboxRefreshing = false
     }
 
     fun refreshInbox() {

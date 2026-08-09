@@ -285,6 +285,9 @@ class CloudSync(
         onProgress("Inbox…")
         val inbox = runCatching { api.getInbox() }.getOrNull()
         inbox?.transactions?.let { list ->
+            // FK: transactions.accountId → accounts.id. Guarantee a parent row
+            // so inbox landings never fail after accounts-only prune drift.
+            ensureAccountsForInbox(planId, list, now)
             val inboxEntities = list.mapNotNull { t ->
                 val stableId = t.stableId()
                 if (stableId.isBlank()) null
@@ -419,11 +422,15 @@ class CloudSync(
                     },
                 )
             }
-            val accountIds = accounts.map { it.ynabId }.toSet()
+            // Do NOT filter by pack.accounts / open-account set — that used to
+            // drop most inbox rows when getAccounts and /v1/inbox diverge
+            // (closed vs open, alias-only rows, timing). Same rule as pullChanges.
+            ensureAccountsForInbox(planId, inbox.transactions, now)
             val pendingLocal = db.transactionDao().pendingPushIds(planId).toSet()
             val entities = inbox.transactions.mapNotNull { t ->
                 val stableId = t.stableId()
-                if (stableId.isBlank() || t.accountId !in accountIds) null
+                if (stableId.isBlank()) null
+                else if (!t.deleted && t.accountId.isBlank()) null
                 else if (stableId in pendingLocal || t.ynabId in pendingLocal) null
                 else toEntity(t, planId, now, deleted = t.deleted)
             }
@@ -567,6 +574,50 @@ class CloudSync(
             "reconciled" -> ClearedStatus.reconciled
             else -> ClearedStatus.uncleared
         }
+
+    /**
+     * Upsert minimal account rows for any inbox [accountId] missing from Room.
+     * Prevents SQLite FK failures that used to abort the whole inbox merge and
+     * leave Categorization empty while /v1/inbox still returned rows.
+     */
+    private suspend fun ensureAccountsForInbox(
+        planId: String,
+        list: List<CloudTransaction>,
+        now: Long,
+    ) {
+        val needed = list.mapNotNull { t ->
+            t.accountId.takeIf { it.isNotBlank() }
+        }.toSet()
+        if (needed.isEmpty()) return
+        val missing = needed.filter { id ->
+            db.accountDao().getById(id) == null
+        }
+        if (missing.isEmpty()) return
+        val cloudById = runCatching {
+            api.getAccounts().associateBy { it.ynabId }
+        }.getOrDefault(emptyMap())
+        db.accountDao().upsertAll(
+            missing.map { id ->
+                val a = cloudById[id]
+                AccountEntity(
+                    id = id,
+                    planId = planId,
+                    name = a?.name
+                        ?: list.firstOrNull { it.accountId == id }?.accountName
+                        ?: "Account",
+                    type = parseAccountType(a?.type ?: "checking"),
+                    onBudget = a?.onBudget ?: true,
+                    closed = a?.closed ?: false,
+                    note = a?.note,
+                    transferPayeeId = a?.transferPayeeId,
+                    ynabId = id,
+                    balanceMilli = a?.balance,
+                    updatedAt = now,
+                    syncStatus = SyncStatus.SYNCED,
+                )
+            },
+        )
+    }
 
     /**
      * Fill [AccountEntity.balanceMilli] from GET /v1/accounts when any open

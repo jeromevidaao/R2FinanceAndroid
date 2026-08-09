@@ -45,9 +45,12 @@ class AppContainer(context: Context) {
     /**
      * Auto-flush offline queue when the network returns.
      * Started from [com.cleaningbutton.r2finance.R2FinanceApplication].
+     * Skips cloud pull when there is no Bearer session (login still pending).
      */
     val connectivityMonitor: ConnectivityMonitor = ConnectivityMonitor(appContext) {
-        syncCoordinator.syncWhenOnline()
+        if (sessionStore.isSessionValid()) {
+            syncCoordinator.syncWhenOnline()
+        }
     }
 
     /**
@@ -79,7 +82,10 @@ class AppContainer(context: Context) {
     /**
      * Process start only (not per-tab):
      * 1. Paint-ready RAM: aggregates + Categorization + plan name from Room
-     * 2. One silent cloud hydrate (delta, or full if Room empty)
+     * 2. One silent cloud hydrate when session already valid (delta, or full if
+     *    Room has no live transactions). Without a Bearer token the hydrate is
+     *    deferred to [warmAuthenticatedCaches] after login — never mark a failed
+     *    unauthenticated pull as "done".
      * 3. Connectors warm when session token already present
      *
      * Screens must **not** re-call [SyncCoordinator.ensureHydrated] on bottom-nav
@@ -92,22 +98,27 @@ class AppContainer(context: Context) {
             aggregates.start(plan.id)
             // Room Categorization list ready before first tab open (no empty flash).
             inboxCache.start(plan.id)
-            // Single process hydrate; ConnectivityMonitor handles reconnect later.
-            syncCoordinator.ensureHydrated(plan.id)
-            // Connectors need Bearer — skip until logged in ([warmAuthenticatedCaches]).
             if (sessionStore.isSessionValid()) {
+                // Single process hydrate; ConnectivityMonitor handles reconnect later.
+                syncCoordinator.ensureHydrated(plan.id)
                 connectorsCache.ensureWarm(probeBalancesIfNeeded = true)
             }
         }
     }
 
     /**
-     * Call after login / bio unlock when token is live so Accounts is warm
-     * before the user opens that tab.
+     * Call after login / bio unlock when the Bearer token is live.
+     * Hydrates the ledger (full if Room has 0 transactions) and warms Accounts
+     * connectors so Categorization / Reflect / Home are not stuck empty after
+     * a cold login that skipped the process-start pull.
      */
     fun warmAuthenticatedCaches() {
         applicationScope.launch {
             if (!sessionStore.isSessionValid()) return@launch
+            val plan = ledger.ensureDefaultPlan()
+            _planName.value = plan.name.ifBlank { "R2Finance" }
+            // Ledger first — empty Room after login is the "All clear / No txns" bug.
+            syncCoordinator.ensureHydrated(plan.id)
             connectorsCache.ensureWarm(probeBalancesIfNeeded = true)
         }
     }

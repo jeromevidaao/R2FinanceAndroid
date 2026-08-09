@@ -39,6 +39,14 @@ class InboxCache(
     val ready: StateFlow<Boolean> = _ready.asStateFlow()
 
     /**
+     * Process-scoped: at most one automatic empty-inbox cloud heal per cold start.
+     * Survives bottom-nav remounts so we do not hammer /v1/inbox every tab switch
+     * when the server truly has zero needs-attention rows.
+     */
+    @Volatile
+    var emptyInboxHealAttempted: Boolean = false
+
+    /**
      * Start (or switch) the long-lived Room subscription.
      * Safe to call from every screen entry — no-ops when already watching [planId].
      */

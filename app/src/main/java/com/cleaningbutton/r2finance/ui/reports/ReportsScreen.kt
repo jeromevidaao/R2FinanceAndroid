@@ -110,8 +110,14 @@ fun ReportsScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Text(
-                        "No transactions yet.\nSync from Accounts to load your ledger.",
+                        "No transactions on this phone yet.",
                         style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Text(
+                        "Open Categorization and pull down to refresh — that loads the full ledger from R2Finance.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp),
                     )
                 }
             }
