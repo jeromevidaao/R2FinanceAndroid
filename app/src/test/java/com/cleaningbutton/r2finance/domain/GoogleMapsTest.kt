@@ -1,7 +1,6 @@
 package com.cleaningbutton.r2finance.domain
 
 import com.cleaningbutton.r2finance.data.local.entity.TransactionEntity
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -10,23 +9,19 @@ import org.junit.Test
 class GoogleMapsTest {
 
     @Test
-    fun restaurant_pfc_detected() {
-        assertTrue(GoogleMaps.isRestaurantPlace("FOOD_AND_DRINK_RESTAURANTS"))
-        assertTrue(GoogleMaps.isRestaurantPlace("Food and Drink · Coffee"))
-        assertFalse(GoogleMaps.isRestaurantPlace("TRANSFER_IN"))
-        assertFalse(GoogleMaps.isRestaurantPlace(null))
-    }
-
-    @Test
-    fun search_url_prefers_coords() {
-        val url = GoogleMaps.searchUrl(
-            payee = "Voyager Cafe",
-            locationDisplay = "Seattle, WA",
-            lat = 47.6,
-            lon = -122.3,
+    fun search_url_null_without_place() {
+        assertNull(
+            GoogleMaps.searchUrl(
+                payee = "Voyager Cafe",
+                locationDisplay = null,
+            ),
         )
-        assertNotNull(url)
-        assertTrue(url!!.contains("47.6,-122.3"))
+        assertNull(
+            GoogleMaps.searchUrl(
+                payee = "Voyager Cafe",
+                locationDisplay = "   ",
+            ),
+        )
     }
 
     @Test
@@ -39,6 +34,8 @@ class GoogleMapsTest {
         assertTrue(url!!.contains("query="))
         assertTrue(url.contains("Voyager") || url.contains("Voyager+Cafe"))
         assertTrue(url.contains("Seattle"))
+        // Never a raw lat/lon pin query
+        assertTrue(!url.matches(Regex(".*query=\\d+\\.\\d+,-?\\d+\\.\\d+.*")))
     }
 
     @Test
@@ -54,10 +51,11 @@ class GoogleMapsTest {
         )
         val url = GoogleMaps.urlForTxn(txn, "Voyager Cafe")
         assertNotNull(url)
+        assertTrue(url!!.contains("Seattle"))
     }
 
     @Test
-    fun url_for_restaurant_without_pin_uses_payee() {
+    fun no_url_for_restaurant_without_place() {
         val txn = TransactionEntity(
             id = "t2",
             planId = "p",
@@ -67,9 +65,7 @@ class GoogleMapsTest {
             plaidPfc = "FOOD_AND_DRINK_RESTAURANTS",
             plaidMerchantName = "Don's Cafe",
         )
-        val url = GoogleMaps.urlForTxn(txn, "Don's Cafe")
-        assertNotNull(url)
-        assertTrue(url!!.contains("Don"))
+        assertNull(GoogleMaps.urlForTxn(txn, "Don's Cafe"))
     }
 
     @Test

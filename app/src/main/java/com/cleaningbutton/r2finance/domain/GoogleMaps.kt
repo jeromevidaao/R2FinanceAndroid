@@ -10,40 +10,26 @@ import java.nio.charset.StandardCharsets
 
 /**
  * Google Maps deep links for categorize / approval context.
- * Android stores place label only ([TransactionEntity.locationDisplay]);
- * search by payee + city so restaurant places open with useful results.
+ * Android stores place label only ([TransactionEntity.locationDisplay]).
+ * Only surface a link when a place was found as text — never raw lat/lon;
+ * search by payee + place name.
  */
 object GoogleMaps {
 
-    private val RESTAURANT_PFC_RE =
-        Regex(
-            "FOOD|RESTAURANT|COFFEE|CAFE|BAR|DINING|FAST.?FOOD|TAKEOUT|BAKERY|BREWERY|PUB|NIGHTLIFE",
-            RegexOption.IGNORE_CASE,
-        )
-
-    /** True when Plaid personal finance category looks like food/restaurant. */
-    fun isRestaurantPlace(plaidPfc: String?): Boolean {
-        if (plaidPfc.isNullOrBlank()) return false
-        return RESTAURANT_PFC_RE.containsMatchIn(plaidPfc)
-    }
-
     /**
-     * Build a Google Maps search URL, or null when nothing useful to search.
+     * Build a Google Maps search URL from place text, or null when no place
+     * label is available (coordinates alone are not used).
      */
     fun searchUrl(
         payee: String? = null,
         locationDisplay: String? = null,
-        lat: Double? = null,
-        lon: Double? = null,
     ): String? {
-        if (lat != null && lon != null && lat.isFinite() && lon.isFinite()) {
-            return "https://www.google.com/maps/search/?api=1&query=$lat,$lon"
-        }
-        val name = payee?.trim().orEmpty()
         val place = locationDisplay?.trim().orEmpty()
+        if (place.isEmpty()) return null
+        val name = payee?.trim().orEmpty()
         val parts = mutableListOf<String>()
         if (name.isNotEmpty()) parts.add(name)
-        if (place.isNotEmpty() && !place.equals(name, ignoreCase = true)) {
+        if (!place.equals(name, ignoreCase = true)) {
             parts.add(place)
         }
         val query = parts.joinToString(" ").replace(Regex("\\s+"), " ").trim()
@@ -53,20 +39,17 @@ object GoogleMaps {
     }
 
     /**
-     * When to surface a Maps link during categorization:
-     * - any row with a place pin (locationDisplay), or
-     * - restaurant-like PFC with a resolvable payee name.
+     * Surface a Maps link only when enrich found a place label
+     * ([TransactionEntity.locationDisplay]). Restaurant-name guesses without
+     * a place are suppressed.
      */
     fun urlForTxn(
         txn: TransactionEntity,
         payee: String? = null,
     ): String? {
-        val hasPlace = !txn.locationDisplay.isNullOrBlank()
+        if (txn.locationDisplay.isNullOrBlank()) return null
         val name = payee?.trim()?.takeIf { it.isNotEmpty() }
             ?: txn.plaidMerchantName?.trim()?.takeIf { it.isNotEmpty() }
-        if (!hasPlace && !(isRestaurantPlace(txn.plaidPfc) && name != null)) {
-            return null
-        }
         return searchUrl(
             payee = name,
             locationDisplay = txn.locationDisplay,
