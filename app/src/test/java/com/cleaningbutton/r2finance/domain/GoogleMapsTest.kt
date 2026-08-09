@@ -6,8 +6,15 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 
 class GoogleMapsTest {
+
+    private fun queryOf(url: String): String {
+        val raw = url.substringAfter("query=").substringBefore('&')
+        return URLDecoder.decode(raw, StandardCharsets.UTF_8.name())
+    }
 
     @Test
     fun coordinate_query_detection() {
@@ -61,10 +68,31 @@ class GoogleMapsTest {
         )
         assertNotNull(url)
         assertTrue(url!!.contains("query="))
-        assertTrue(url.contains("Voyager") || url.contains("Voyager+Cafe"))
-        assertTrue(url.contains("Seattle"))
-        // Never a raw lat/lon pin query
-        assertTrue(!url.matches(Regex(".*query=\\d+\\.\\d+,-?\\d+\\.\\d+.*")))
+        val q = queryOf(url)
+        assertTrue(q.contains("Voyager", ignoreCase = true))
+        assertTrue(q.contains("Seattle", ignoreCase = true))
+        assertTrue(!GoogleMaps.isCoordinateQuery(q))
+    }
+
+    @Test
+    fun drops_mismatched_poi_head_in_location_display() {
+        val url = GoogleMaps.searchUrl(
+            payee = "Don's Cafe",
+            locationDisplay = "Sister's cafe, Bellevue, WA, 98005, US",
+        )
+        assertNotNull(url)
+        val q = queryOf(url!!)
+        assertTrue(q.contains("Don", ignoreCase = true))
+        assertTrue(q.contains("Bellevue", ignoreCase = true))
+        assertFalse(q.contains("Sister", ignoreCase = true))
+    }
+
+    @Test
+    fun place_name_related_rejects_wrong_cafe() {
+        assertFalse(GoogleMaps.placeNameRelated("Don's Cafe", "Sister's cafe"))
+        assertTrue(GoogleMaps.placeNameRelated("Don's Cafe", "Don's Cafe"))
+        assertTrue(GoogleMaps.isStreetAddress("1023 4th Ave"))
+        assertFalse(GoogleMaps.isStreetAddress("Sister's cafe"))
     }
 
     @Test
