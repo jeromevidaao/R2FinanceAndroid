@@ -224,6 +224,12 @@ data class TransactionEntity(
      */
     val locationDisplay: String? = null,
     val locationSource: String? = null,
+    /** Amazon order enrichment from Chrome extension → DDB. */
+    val amazonOrderNumber: String? = null,
+    val amazonOrderUrl: String? = null,
+    /** Pipe-joined item titles for Room simplicity. */
+    val amazonItemsJoined: String? = null,
+    val amazonItemsSummary: String? = null,
 )
 
 @Entity(

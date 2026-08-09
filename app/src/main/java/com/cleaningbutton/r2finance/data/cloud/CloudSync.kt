@@ -564,6 +564,15 @@ class CloudSync(
             plaidPfc = t.plaidPfc,
             locationDisplay = t.locationDisplay,
             locationSource = t.locationSource,
+            amazonOrderNumber = t.amazonOrderNumber,
+            amazonOrderUrl = t.amazonOrderUrl,
+            amazonItemsJoined = t.amazonItems
+                ?.map { it.trim() }
+                ?.filter { it.isNotEmpty() }
+                ?.take(20)
+                ?.joinToString(" | ")
+                ?.takeIf { it.isNotEmpty() },
+            amazonItemsSummary = t.amazonItemsSummary,
         )
     }
 

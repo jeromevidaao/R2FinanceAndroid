@@ -58,7 +58,7 @@ class Converters {
         SubTransactionEntity::class,
         ScheduledTransactionEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -108,13 +108,29 @@ abstract class R2FinanceDatabase : RoomDatabase() {
                 }
             }
 
+        private val MIGRATION_5_6 =
+            object : Migration(5, 6) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL("ALTER TABLE transactions ADD COLUMN amazonOrderNumber TEXT")
+                    db.execSQL("ALTER TABLE transactions ADD COLUMN amazonOrderUrl TEXT")
+                    db.execSQL("ALTER TABLE transactions ADD COLUMN amazonItemsJoined TEXT")
+                    db.execSQL("ALTER TABLE transactions ADD COLUMN amazonItemsSummary TEXT")
+                }
+            }
+
         fun get(context: Context): R2FinanceDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext,
                     R2FinanceDatabase::class.java,
                     "r2finance.db",
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                ).addMigrations(
+                    MIGRATION_1_2,
+                    MIGRATION_2_3,
+                    MIGRATION_3_4,
+                    MIGRATION_4_5,
+                    MIGRATION_5_6,
+                )
                     .build()
                     .also { instance = it }
             }

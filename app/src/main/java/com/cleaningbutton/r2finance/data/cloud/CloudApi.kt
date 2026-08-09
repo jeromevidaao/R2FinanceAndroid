@@ -112,6 +112,12 @@ data class CloudTransaction(
     /** "City, ST" (US) or "City, Country" (intl). */
     val locationDisplay: String? = null,
     val locationSource: String? = null,
+    /** Amazon order enrichment (Chrome extension → DDB match). */
+    val amazonOrderNumber: String? = null,
+    val amazonOrderUrl: String? = null,
+    val amazonItems: List<String>? = null,
+    val amazonItemsSummary: String? = null,
+    val amazonMatchMethod: String? = null,
 ) {
     /** Room / local primary key preference. */
     fun stableId(): String = id?.takeIf { it.isNotBlank() }

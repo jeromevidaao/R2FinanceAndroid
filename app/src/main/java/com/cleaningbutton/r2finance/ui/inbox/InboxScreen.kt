@@ -499,6 +499,7 @@ private fun InboxTxnRow(
     }
     val context = LocalContext.current
     val payeeLabel = buildString {
+        // DisplayPayee already appends Amazon items when matched.
         append(row.payeeName ?: "No payee")
         if (showCancelsPair) append(" · cancels pair")
     }
@@ -612,6 +613,17 @@ private fun InboxTxnRow(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
                     )
+                    if (!txn.amazonOrderUrl.isNullOrBlank()) {
+                        Text(
+                            "Amazon",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier.clickable {
+                                GoogleMaps.open(context, txn.amazonOrderUrl)
+                            },
+                        )
+                    }
                     if (mapsUrl != null) {
                         Text(
                             "Maps",

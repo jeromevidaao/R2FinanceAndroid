@@ -116,6 +116,20 @@ object DisplayPayee {
         return false
     }
 
+    private fun looksLikeVenmoPersonalDesc(s: String): Boolean {
+        val t = s.trim()
+        if (t.isEmpty() || isGenericVenmoPayee(t)) return false
+        if (Regex("""^(.+?)\s+["“](.+?)["”]\s*$""").containsMatchIn(t)) return true
+        // Title Case person - note (not ALL-CAPS merchant - CITY)
+        if (Regex("""^[A-Z][a-z]+(?:\s+[A-Z][a-z'.-]+)+\s-\s\S""").containsMatchIn(t)) {
+            return true
+        }
+        if (Regex("""standard\s+transfer""", RegexOption.IGNORE_CASE).containsMatchIn(t)) {
+            return true
+        }
+        return false
+    }
+
     /**
      * Venmo Personal note for UI: "Person - note".
      * Only Venmo-style labels (quoted note or stamped "Name - note").
@@ -126,7 +140,7 @@ object DisplayPayee {
         plaidMerchantName: String?,
     ): String? {
         val d = plaidDescription?.trim()
-        if (!d.isNullOrEmpty() && !isGenericVenmoPayee(d)) return d
+        if (!d.isNullOrEmpty() && looksLikeVenmoPersonalDesc(d)) return d
         for (raw in listOf(plaidName, plaidMerchantName)) {
             if (raw.isNullOrBlank() || isGenericVenmoPayee(raw)) continue
             val s = raw.trim()
@@ -197,7 +211,7 @@ object DisplayPayee {
         val transferName = txn.transferAccountId?.let { tid ->
             accounts.firstOrNull { it.id == tid }?.name
         }
-        return resolve(
+        val base = resolve(
             namedPayee = namedPayee,
             transferAccountName = transferName,
             plaidMerchantName = txn.plaidMerchantName,
@@ -207,5 +221,23 @@ object DisplayPayee {
             plaidName = txn.plaidName,
             plaidDescription = txn.plaidDescription,
         )
+        return enhanceAmazon(base, txn)
+    }
+
+    /** Append matched Amazon item titles to the payee label. */
+    fun enhanceAmazon(base: String?, txn: TransactionEntity): String? {
+        val summary = txn.amazonItemsSummary?.trim()?.takeIf { it.isNotEmpty() }
+            ?: txn.amazonItemsJoined
+                ?.split("|")
+                ?.map { it.trim() }
+                ?.filter { it.isNotEmpty() }
+                ?.take(3)
+                ?.joinToString(", ")
+                ?.takeIf { it.isNotEmpty() }
+        if (summary.isNullOrBlank()) return base
+        val label = base?.trim()?.takeIf { it.isNotEmpty() } ?: "Amazon"
+        if (label.contains(summary)) return label
+        if (label.contains(" — ") && label.contains("amazon", ignoreCase = true)) return label
+        return "$label — $summary"
     }
 }

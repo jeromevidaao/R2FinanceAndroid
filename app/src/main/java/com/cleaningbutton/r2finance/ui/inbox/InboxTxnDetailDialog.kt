@@ -129,6 +129,26 @@ fun InboxTxnDetailDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (!txn.amazonOrderUrl.isNullOrBlank()) {
+                    Text(
+                        buildString {
+                            append(
+                                txn.amazonOrderNumber?.let { "Amazon order $it" }
+                                    ?: "Amazon order",
+                            )
+                            txn.amazonItemsSummary?.takeIf { it.isNotBlank() }?.let {
+                                append(" · ")
+                                append(it)
+                            }
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.clickable {
+                            GoogleMaps.open(context, txn.amazonOrderUrl)
+                        },
+                    )
+                }
                 if (!txn.locationDisplay.isNullOrBlank() || mapsUrl != null) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
