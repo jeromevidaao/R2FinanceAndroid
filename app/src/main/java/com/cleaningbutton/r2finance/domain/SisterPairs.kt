@@ -167,6 +167,32 @@ fun findSisterPairs(
 ): SisterPairResult<TransactionRow> =
     findSisterPairsWith(items, ROW_ACCESSORS, dateWindowDays)
 
+/**
+ * Transfers may be approved from Categorization only when they cancel
+ * (net $0) inside the selection — a sister pair (CC payment + transfer,
+ * or both transfer legs) or unpaired transfers that themselves sum to 0.
+ * Regular non-transfer spend is always approvable.
+ */
+fun <T> canApproveInboxSelectionWith(
+    items: List<T>,
+    acc: SisterTxnAccessors<T>,
+    isTransfer: (T) -> Boolean,
+    dateWindowDays: Long = SISTER_DATE_WINDOW_DAYS,
+): Boolean {
+    if (items.none(isTransfer)) return true
+    val unpairedTransfers = findSisterPairsWith(items, acc, dateWindowDays)
+        .unpaired
+        .filter(isTransfer)
+    return unpairedTransfers.sumOf { acc.amount(it) } == 0L
+}
+
+fun canApproveInboxSelection(items: List<TransactionRow>): Boolean =
+    canApproveInboxSelectionWith(
+        items,
+        ROW_ACCESSORS,
+        isTransfer = { it.txn.transferAccountId != null },
+    )
+
 /** Flatten pairs as [a1,b1,a2,b2,…] for list display. */
 fun <T> flattenSisterPairs(pairs: List<SisterPair<T>>): List<T> {
     val out = ArrayList<T>(pairs.size * 2)

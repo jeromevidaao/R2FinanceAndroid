@@ -27,6 +27,7 @@ import com.cleaningbutton.r2finance.domain.DisplayPayee
 import com.cleaningbutton.r2finance.domain.GoogleMaps
 import com.cleaningbutton.r2finance.domain.Money
 import com.cleaningbutton.r2finance.domain.RelativeDate
+import com.cleaningbutton.r2finance.domain.canApproveInboxSelection
 import com.cleaningbutton.r2finance.ui.category.CategoryChip
 import com.cleaningbutton.r2finance.ui.category.categoryChipForRow
 import kotlinx.coroutines.launch
@@ -61,6 +62,7 @@ fun InboxTxnDetailDialog(
     var memo by remember { mutableStateOf(txn.memo.orEmpty()) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    val canApproveThis = remember(row) { canApproveInboxSelection(listOf(row)) }
 
     fun save(
         alsoApprove: Boolean = false,
@@ -212,6 +214,13 @@ fun InboxTxnDetailDialog(
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !busy,
                 )
+                if (!txn.approved && !canApproveThis) {
+                    Text(
+                        "Transfers must net to $0 — select the matching pair to approve",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 error?.let {
                     Text(it, color = MaterialTheme.colorScheme.error)
                 }
@@ -253,7 +262,7 @@ fun InboxTxnDetailDialog(
                 if (!txn.approved) {
                     TextButton(
                         onClick = { save(alsoApprove = true) },
-                        enabled = !busy,
+                        enabled = !busy && canApproveThis,
                     ) { Text("Approve") }
                 }
                 TextButton(onClick = onDismiss, enabled = !busy) { Text("Close") }

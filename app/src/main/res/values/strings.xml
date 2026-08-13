@@ -15,7 +15,7 @@
     <string name="empty_register">No transactions in this account.</string>
     <string name="empty_inbox">All clear — nothing left to approve or categorize.</string>
     <string name="inbox_title_with_count">Categorization (%1$d)</string>
-    <string name="inbox_subtitle">By date · sister pairs still merged · approve works without a category</string>
+    <string name="inbox_subtitle">By date · sister pairs still merged · transfers need net $0 to approve</string>
     <string name="inbox_empty_hint">Unapproved and uncategorized transactions show here. Tap Sync to refresh from cloud.</string>
     <string name="empty_categories">No categories yet.</string>
     <string name="update_available">Update available</string>

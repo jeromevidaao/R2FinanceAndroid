@@ -1,6 +1,7 @@
 package com.cleaningbutton.r2finance.domain
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -10,6 +11,7 @@ private data class FakeTxn(
     val date: String,
     val transferTxnId: String? = null,
     val altId: String? = null,
+    val isTransfer: Boolean = transferTxnId != null,
 )
 
 private val FAKE_ACC = object : SisterTxnAccessors<FakeTxn> {
@@ -93,5 +95,88 @@ class SisterPairsTest {
         assertEquals(0L, flat[2].amount + flat[3].amount)
         assertTrue(isSisterPairStart(0))
         assertTrue(isSisterPairEnd(1))
+    }
+}
+
+class InboxApproveSelectionTest {
+    private fun canApprove(items: List<FakeTxn>): Boolean =
+        canApproveInboxSelectionWith(
+            items,
+            FAKE_ACC,
+            isTransfer = { it.isTransfer },
+        )
+
+    @Test
+    fun regular_spend_any_net_is_allowed() {
+        assertTrue(
+            canApprove(
+                listOf(
+                    FakeTxn("coffee", -4_500L, "2026-08-01"),
+                    FakeTxn("lunch", -18_000L, "2026-08-01"),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun sister_pair_cc_payment_and_transfer_is_allowed() {
+        assertTrue(
+            canApprove(
+                listOf(
+                    FakeTxn("pay", -239_350L, "2026-08-01"),
+                    FakeTxn("xfer", 239_350L, "2026-08-01", isTransfer = true),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun sister_pair_plus_unrelated_spend_is_allowed() {
+        assertTrue(
+            canApprove(
+                listOf(
+                    FakeTxn("pay", -239_350L, "2026-08-01"),
+                    FakeTxn("xfer", 239_350L, "2026-08-01", isTransfer = true),
+                    FakeTxn("coffee", -4_500L, "2026-08-01"),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun lone_nonzero_transfer_is_blocked() {
+        assertFalse(
+            canApprove(
+                listOf(FakeTxn("xfer", 239_350L, "2026-08-01", isTransfer = true)),
+            ),
+        )
+    }
+
+    @Test
+    fun spend_plus_unpaired_transfer_is_blocked() {
+        assertFalse(
+            canApprove(
+                listOf(
+                    FakeTxn("coffee", -4_500L, "2026-08-01"),
+                    FakeTxn("xfer", 239_350L, "2026-08-01", isTransfer = true),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun unpaired_transfers_that_net_to_zero_are_allowed() {
+        // Far apart so they are not sister-paired, but still cancel.
+        val items = listOf(
+            FakeTxn("a", 50_000L, "2026-01-01", isTransfer = true),
+            FakeTxn("b", -50_000L, "2026-08-01", isTransfer = true),
+        )
+        assertTrue(findSisterPairsWith(items, FAKE_ACC).pairs.isEmpty())
+        assertTrue(canApprove(items))
+    }
+
+    @Test
+    fun empty_selection_is_allowed() {
+        assertTrue(canApprove(emptyList()))
     }
 }

@@ -61,6 +61,7 @@ import com.cleaningbutton.r2finance.data.cloud.SyncCoordinator
 import com.cleaningbutton.r2finance.data.repository.TransactionRow
 import com.cleaningbutton.r2finance.domain.Money
 import com.cleaningbutton.r2finance.domain.RelativeDate
+import com.cleaningbutton.r2finance.domain.canApproveInboxSelection
 import com.cleaningbutton.r2finance.ui.categorize.CategorizeDialog
 import com.cleaningbutton.r2finance.ui.category.CategoryChip
 import com.cleaningbutton.r2finance.ui.category.CategoryChipModel
@@ -189,6 +190,11 @@ fun InboxScreen(container: AppContainer) {
 
     fun approveSelected() {
         if (selectedIds.isEmpty()) return
+        val selectedNow = items.filter { it.txn.id in selectedIds }
+        if (!canApproveInboxSelection(selectedNow)) {
+            refreshMessage = "Transfers must net to $0 to approve"
+            return
+        }
         val ids = selectedIds.toList()
         // Optimistic: clear selection immediately; Room drop + silent push.
         selectedIds = emptySet()
@@ -220,6 +226,9 @@ fun InboxScreen(container: AppContainer) {
     }
     val selectedNet = remember(selectedRows) {
         selectedRows.sumOf { it.txn.amountMilli }
+    }
+    val canApproveSelected = remember(selectedRows) {
+        canApproveInboxSelection(selectedRows)
     }
     val dateGroups = remember(items) { groupInboxByDate(items) }
 
@@ -279,10 +288,20 @@ fun InboxScreen(container: AppContainer) {
             if (hasSelection) {
                 BottomAppBar(
                     actions = {
-                        OutlinedButton(
-                            onClick = { approveSelected() },
-                            modifier = Modifier.padding(start = 8.dp),
-                        ) { Text("Approve") }
+                        Column(modifier = Modifier.padding(start = 8.dp)) {
+                            OutlinedButton(
+                                onClick = { approveSelected() },
+                                enabled = canApproveSelected,
+                            ) { Text("Approve") }
+                            if (!canApproveSelected) {
+                                Text(
+                                    "Transfers must net to $0",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 2.dp),
+                                )
+                            }
+                        }
                         Spacer(Modifier.width(8.dp))
                         Button(
                             onClick = {
