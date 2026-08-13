@@ -24,6 +24,11 @@ data class CloudSyncReport(
     val inboxCount: Int = 0,
     val mode: String = "full",
     val cursor: Long = 0L,
+    /**
+     * Server live-transaction total from the pack (full snapshot `txnTotal`).
+     * Used to detect incomplete local ledgers that undercount Reflect.
+     */
+    val txnTotal: Int = 0,
 )
 
 /**
@@ -308,6 +313,13 @@ class CloudSync(
         }
 
         onProgress("Done")
+        val counts = pack.counts
+        val serverTxnTotal =
+            when {
+                pack.txnTotal > 0 -> pack.txnTotal
+                counts != null && counts.txnTotal > 0 -> counts.txnTotal
+                else -> pack.transactions.size
+            }
         CloudSyncReport(
             planName = planInfo.name,
             accounts = pack.accounts.size,
@@ -317,6 +329,7 @@ class CloudSync(
             inboxCount = inbox?.count ?: 0,
             mode = mode,
             cursor = cursor,
+            txnTotal = serverTxnTotal,
         )
     }
 

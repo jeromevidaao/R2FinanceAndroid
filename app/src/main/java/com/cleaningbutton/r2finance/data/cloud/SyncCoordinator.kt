@@ -22,10 +22,13 @@ import kotlinx.coroutines.sync.withLock
  * Day-to-day HTTP stays light: [KEY_SYNC_CURSOR] drives GET /v1/sync/changes?since=…
  * Silent full resync every [FULL_SYNC_INTERVAL_MS] avoids long-term drift.
  *
- * **Empty-ledger recovery:** accounts alone do not count as a usable ledger.
- * Zero live transactions always force a full hydrate (and never coalesce), so a
- * botched prune / pre-login failed pull / reinstall cannot leave Categorization
- * "All clear" and Reflect "No transactions" while the cloud still has thousands.
+ * **Ledger completeness (Reflect):**
+ * - Zero live transactions always force a full hydrate (never coalesce).
+ * - Inbox-only / partial Room (never completed a successful full snapshot, or
+ *   live count ≪ last known server `txnTotal`) also force full — otherwise
+ *   Reflect "Last 12 Months" can stick at a few thousand dollars while YNAB
+ *   shows ~$300k because only unapproved inbox rows ever landed locally.
+ * - Never seed [KEY_LAST_FULL_SYNC_AT] from a delta; only a real full pack.
  */
 class SyncCoordinator(
     context: Context,
@@ -74,15 +77,26 @@ class SyncCoordinator(
     }
 
     /**
-     * True when Room cannot paint Reflect / Categorization from a real ledger.
-     * Accounts without transactions are treated as empty (common after a failed
-     * full sync that landed meta rows only, or a prune without re-insert).
+     * True when Room cannot paint Reflect / Categorization from a complete ledger.
+     * - 0 live transactions (failed full / prune / reinstall)
+     * - never completed a successful full snapshot (inbox-only stays sparse)
+     * - live count far below last known server total (partial page apply / prune)
      */
-    private fun needsFullHydrate(): Boolean = liveTxnCount <= 0
+    private fun needsFullHydrate(): Boolean {
+        if (liveTxnCount <= 0) return true
+        if (lastFullSyncAt() <= 0L) return true
+        val serverTotal = prefs.getInt(KEY_SERVER_TXN_TOTAL, 0)
+        if (serverTotal >= MIN_SERVER_TXN_TOTAL_FOR_RATIO &&
+            liveTxnCount < serverTotal * LEDGER_COMPLETENESS_NUM / LEDGER_COMPLETENESS_DEN
+        ) {
+            return true
+        }
+        return false
+    }
 
     /**
      * Local-first entry (call from process warmup + post-auth, not every tab):
-     * show Room immediately; full-hydrate when empty of transactions.
+     * show Room immediately; full-hydrate when empty/incomplete.
      * When data exists: push pending + lightweight delta (or silent full if due).
      * Coalesces with [syncWhenOnline] so cold-start does not double-pull.
      */
@@ -182,10 +196,8 @@ class SyncCoordinator(
 
     private fun shouldFullSync(): Boolean {
         val lastFull = lastFullSyncAt()
-        // Missing lastFull (upgrade / first install with Room already filled) must NOT
-        // force a multi-MB full pull that used to wipe-before-write and blank the UI.
-        // Empty Room still force-fulls via needsFullHydrate().
-        if (lastFull <= 0L) return false
+        // Never completed a full snapshot → always full (upsert-first; no wipe flash).
+        if (lastFull <= 0L) return true
         return System.currentTimeMillis() - lastFull >= FULL_SYNC_INTERVAL_MS
     }
 
@@ -303,30 +315,39 @@ class SyncCoordinator(
 
     private suspend fun markSyncedOk(planId: String, report: CloudSyncReport) {
         val now = System.currentTimeMillis()
+        refreshLocalDataFlag(planId)
         val edit = prefs.edit().putLong(KEY_LAST_SYNCED_AT, now)
         // Never advance the delta cursor after a full pack that applied zero
         // transactions — that would strand the phone on empty-delta forever while
         // the cloud still has the full ledger (and inbox).
         val emptyFull = report.mode == "full" && report.transactions <= 0
-        if (!emptyFull && report.cursor > 0L) {
+        // Partial full (network kill mid-apply, truncated pack): live Room still
+        // far below server total → do not mark full complete or advance cursor.
+        val incompleteFull =
+            report.mode == "full" &&
+                !emptyFull &&
+                report.txnTotal >= MIN_SERVER_TXN_TOTAL_FOR_RATIO &&
+                liveTxnCount <
+                report.txnTotal * LEDGER_COMPLETENESS_NUM / LEDGER_COMPLETENESS_DEN
+        val fullOk = report.mode == "full" && !emptyFull && !incompleteFull
+        if (!emptyFull && !incompleteFull && report.cursor > 0L) {
             edit.putLong(KEY_SYNC_CURSOR, report.cursor)
         }
         if (report.mode == "full") {
-            if (!emptyFull) {
+            if (fullOk) {
                 edit.putLong(KEY_LAST_FULL_SYNC_AT, now)
+                if (report.txnTotal > 0) {
+                    edit.putInt(KEY_SERVER_TXN_TOTAL, report.txnTotal)
+                } else if (liveTxnCount > 0) {
+                    edit.putInt(KEY_SERVER_TXN_TOTAL, liveTxnCount)
+                }
             } else {
                 // Keep lastFull unset/old so the next open retries full hydrate.
                 edit.putLong(KEY_LAST_FULL_SYNC_AT, 0L)
             }
-        } else if (lastFullSyncAt() <= 0L) {
-            // Seed 24h heal clock after first successful delta so upgrades don't
-            // immediately re-download the whole ledger — but only if we actually
-            // have live rows now.
-            refreshLocalDataFlag(planId)
-            if (!needsFullHydrate()) {
-                edit.putLong(KEY_LAST_FULL_SYNC_AT, now)
-            }
         }
+        // Intentionally do NOT seed lastFull from delta — that used to strand
+        // inbox-only Room (pullInbox landed rows, lastFull faked, Reflect ~$2k).
         edit.apply()
         _lastSyncedAt.value = now
         refreshLocalDataFlag(planId)
@@ -336,9 +357,15 @@ class SyncCoordinator(
                 val modeLabel = if (report.mode == "delta") "delta" else report.mode
                 append("Synced “${report.planName}” ($modeLabel): ")
                 append("${report.accounts} accounts, ${report.transactions} transactions")
+                if (report.txnTotal > 0 && report.mode == "full") {
+                    append(" / ${report.txnTotal} cloud")
+                }
                 if (report.inboxCount > 0) append(" · ${report.inboxCount} need attention")
                 if (pending > 0) append(" · $pending still pending upload")
                 if (emptyFull) append(" · empty full pack (will retry)")
+                if (incompleteFull) {
+                    append(" · incomplete ledger $liveTxnCount/${report.txnTotal} (will retry full)")
+                }
             }
     }
 
@@ -348,6 +375,8 @@ class SyncCoordinator(
         private const val KEY_LAST_SYNCED_AT = "last_synced_at"
         private const val KEY_SYNC_CURSOR = "sync_cursor"
         private const val KEY_LAST_FULL_SYNC_AT = "last_full_sync_at"
+        /** Last known server live transaction count from a successful full pack. */
+        private const val KEY_SERVER_TXN_TOTAL = "server_txn_total"
         /** Silent full resync interval to heal drift without daily megabyte pulls. */
         const val FULL_SYNC_INTERVAL_MS: Long = 24L * 60L * 60L * 1000L
         /**
@@ -356,5 +385,13 @@ class SyncCoordinator(
          * Manual [refresh] always runs (separate code path).
          */
         const val BACKGROUND_SYNC_COALESCE_MS: Long = 30_000L
+        /**
+         * Live Room must be at least this fraction of server `txnTotal` or we
+         * force another full hydrate (9/10 = 90%).
+         */
+        const val LEDGER_COMPLETENESS_NUM: Int = 9
+        const val LEDGER_COMPLETENESS_DEN: Int = 10
+        /** Ignore ratio checks on tiny test ledgers. */
+        const val MIN_SERVER_TXN_TOTAL_FOR_RATIO: Int = 100
     }
 }

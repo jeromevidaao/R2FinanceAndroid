@@ -356,15 +356,17 @@ object Analytics {
                 if (hasSplits) t.splitLines.filter { it.transferAccountId == null } else emptyList()
             val transferSubs =
                 if (hasSplits) t.splitLines.filter { it.transferAccountId != null } else emptyList()
-            // True pure-transfer split: every leg is a transfer AND legs sum to the
-            // parent. Orphan / stale Room legs (common after incomplete sync) often
-            // look "transfer-only" but do not reconcile — those must NOT zero spend.
-            val transferLegsSum = transferSubs.sumOf { it.amountMilli }
+            // YNAB invariant: sum(legs) == parent. Stale Room legs after partial
+            // sync often violate this — never trust them for Total spending.
+            val allLegsSum =
+                if (hasSplits) t.splitLines.sumOf { it.amountMilli } else 0L
+            val legsReconcile = hasSplits && allLegsSum == t.amountMilli
+            // True pure-transfer split: every leg is a transfer AND legs sum to
+            // the parent. Attribute nothing (CC payments must not count as spend).
             val pureTransferSplit =
-                hasSplits &&
+                legsReconcile &&
                     nonTransferSubs.isEmpty() &&
-                    transferSubs.isNotEmpty() &&
-                    transferLegsSum == t.amountMilli
+                    transferSubs.isNotEmpty()
 
             data class Line(
                 val amountMilli: Long,
@@ -374,20 +376,20 @@ object Analytics {
             )
 
             /**
-             * Split attribution:
-             * - Prefer non-transfer split legs (real spend / refund).
+             * Split attribution (YNAB Reflect Total spending):
+             * - Prefer non-transfer split legs **only when legs sum to parent**.
              * - Pure transfer split (all legs transfer + amounts equal parent) →
              *   attribute nothing (do not fall back to parent — that counted CC
              *   payments as spend).
-             * - Orphan transfer-only legs that do not sum to parent → ignore splits,
-             *   use parent (stale Room rows after partial sync).
-             * - Non-transfer legs all $0 (incomplete) → fall back to parent.
+             * - Any stale/incomplete split (legs do not sum to parent, orphan
+             *   transfer-only garbage, zero non-transfer stubs) → use parent so
+             *   Reflect is not undercounted to a few thousand dollars.
              * - No splits → parent line.
              */
             val lines: List<Line> =
                 when {
                     pureTransferSplit -> emptyList()
-                    hasSplits && nonTransferSubs.any { it.amountMilli != 0L } ->
+                    legsReconcile && nonTransferSubs.any { it.amountMilli != 0L } ->
                         nonTransferSubs.map {
                             Line(
                                 amountMilli = it.amountMilli,
@@ -396,17 +398,7 @@ object Analytics {
                                 payeeId = it.payeeId,
                             )
                         }
-                    // Orphan transfer-only legs OR zero-amount non-transfer stubs:
-                    // use parent so Reflect is not undercounted.
-                    hasSplits ->
-                        listOf(
-                            Line(
-                                amountMilli = t.amountMilli,
-                                categoryId = t.categoryId,
-                                categoryGroupId = t.categoryGroupId,
-                                payeeId = t.payeeId,
-                            ),
-                        )
+                    // Stale / incomplete splits OR no splits: trust parent amount.
                     else ->
                         listOf(
                             Line(
