@@ -92,8 +92,13 @@ fun InboxScreen(container: AppContainer) {
     var categorizeTargets by remember { mutableStateOf<List<TransactionRow>?>(null) }
     var detailTarget by remember { mutableStateOf<TransactionRow?>(null) }
     var inboxRefreshing by remember { mutableStateOf(false) }
+    var intentionalRefresh by remember { mutableStateOf(false) }
+    var silentHealRunning by remember { mutableStateOf(false) }
     var refreshMessage by remember { mutableStateOf<String?>(null) }
     val pullState = rememberPullToRefreshState()
+    val refreshingFlag = remember {
+        InboxRefreshingFlag(onChange = { inboxRefreshing = it })
+    }
 
     val sync = container.syncCoordinator
     val items by container.inboxCache.rows.collectAsStateWithLifecycle()
@@ -126,56 +131,31 @@ fun InboxScreen(container: AppContainer) {
         container.inboxCache.emptyInboxHealAttempted = true
         val plan = container.ledger.ensureDefaultPlan()
         planId = plan.id
-        inboxRefreshing = true
+        // Silent heal: do not pin PullToRefreshBox once rows paint. If Room fills
+        // mid-heal the effect key changes and Compose cancels this coroutine —
+        // onFinished still clears flags (NonCancellable inside runInboxRefresh).
+        silentHealRunning = true
         refreshMessage = "Checking R2Finance for items to categorize…"
-        val ledgerResult = sync.refresh(plan.id)
-        ledgerResult.onFailure {
-            refreshMessage = "Sync failed: ${it.message}"
-        }
-        val inboxResult = runCatching {
-            container.cloudSync.pullInbox { step -> refreshMessage = step }
-        }
-        inboxResult
-            .onSuccess { report ->
-                refreshMessage =
-                    if (report.inboxCount > 0) {
-                        "${report.inboxCount} need attention (${report.transactions} loaded)"
-                    } else {
-                        "Synced — nothing needs attention on R2Finance"
-                    }
-            }
-            .onFailure {
-                if (ledgerResult.isFailure) {
-                    refreshMessage = "Sync failed: ${it.message}"
-                } else {
-                    refreshMessage = "Inbox refresh failed: ${it.message}"
-                }
-            }
-        inboxRefreshing = false
-    }
-
-    fun refreshInbox() {
-        if (inboxRefreshing) return
-        scope.launch {
-            inboxRefreshing = true
-            refreshMessage = "Refreshing from R2Finance…"
-            // Manual / pull-down: keep Room list painted; land latest cloud state.
-            // 1) Push offline queue + delta (or full if due) + server tick
-            val ledgerResult = sync.refresh(planId)
+        runInboxRefresh(
+            refreshing = refreshingFlag,
+            onTimeoutMessage = { refreshMessage = INBOX_REFRESH_TIMEOUT_MESSAGE },
+            onFinished = { silentHealRunning = false },
+        ) {
+            val ledgerResult = sync.refresh(plan.id)
             ledgerResult.onFailure {
                 refreshMessage = "Sync failed: ${it.message}"
             }
-            // 2) Inbox heal so needs-attention matches /v1/inbox
             val inboxResult = runCatching {
                 container.cloudSync.pullInbox { step -> refreshMessage = step }
             }
             inboxResult
                 .onSuccess { report ->
-                    val mode = ledgerResult.getOrNull()?.mode
-                    val modeLabel = mode?.let { " · $it" }.orEmpty()
                     refreshMessage =
-                        "${report.inboxCount} need attention" +
-                            " (${report.transactions} loaded$modeLabel)"
+                        if (report.inboxCount > 0) {
+                            "${report.inboxCount} need attention (${report.transactions} loaded)"
+                        } else {
+                            "Synced — nothing needs attention on R2Finance"
+                        }
                 }
                 .onFailure {
                     if (ledgerResult.isFailure) {
@@ -184,7 +164,45 @@ fun InboxScreen(container: AppContainer) {
                         refreshMessage = "Inbox refresh failed: ${it.message}"
                     }
                 }
-            inboxRefreshing = false
+        }
+    }
+
+    fun refreshInbox() {
+        if (intentionalRefresh || inboxRefreshing) return
+        scope.launch {
+            intentionalRefresh = true
+            refreshMessage = "Refreshing from R2Finance…"
+            runInboxRefresh(
+                refreshing = refreshingFlag,
+                onTimeoutMessage = { refreshMessage = INBOX_REFRESH_TIMEOUT_MESSAGE },
+                onFinished = { intentionalRefresh = false },
+            ) {
+                // Manual / pull-down: keep Room list painted; land latest cloud state.
+                // 1) Push offline queue + delta (or full if due) + server tick
+                val ledgerResult = sync.refresh(planId)
+                ledgerResult.onFailure {
+                    refreshMessage = "Sync failed: ${it.message}"
+                }
+                // 2) Inbox heal so needs-attention matches /v1/inbox
+                val inboxResult = runCatching {
+                    container.cloudSync.pullInbox { step -> refreshMessage = step }
+                }
+                inboxResult
+                    .onSuccess { report ->
+                        val mode = ledgerResult.getOrNull()?.mode
+                        val modeLabel = mode?.let { " · $it" }.orEmpty()
+                        refreshMessage =
+                            "${report.inboxCount} need attention" +
+                                " (${report.transactions} loaded$modeLabel)"
+                    }
+                    .onFailure {
+                        if (ledgerResult.isFailure) {
+                            refreshMessage = "Sync failed: ${it.message}"
+                        } else {
+                            refreshMessage = "Inbox refresh failed: ${it.message}"
+                        }
+                    }
+            }
         }
     }
 
@@ -233,7 +251,13 @@ fun InboxScreen(container: AppContainer) {
     val dateGroups = remember(items) { groupInboxByDate(items) }
 
     // Prefer any cached rows immediately. "All clear" only after Room is ready and empty.
-    val busy = inboxRefreshing
+    // Silent heal must not keep the pull indicator up once rows are painted.
+    val showPullIndicator = inboxPullIndicatorVisible(
+        intentionalRefresh = intentionalRefresh,
+        silentHealRunning = silentHealRunning,
+        listHasItems = items.isNotEmpty(),
+    )
+    val busy = intentionalRefresh || inboxRefreshing
     val banner = refreshMessage
     val hasSelection = selectedIds.isNotEmpty()
 
@@ -318,7 +342,7 @@ fun InboxScreen(container: AppContainer) {
     ) { padding ->
         // Pull down → same path as toolbar refresh (R2Finance latest).
         PullToRefreshBox(
-            isRefreshing = inboxRefreshing,
+            isRefreshing = showPullIndicator,
             onRefresh = { refreshInbox() },
             state = pullState,
             modifier = Modifier
