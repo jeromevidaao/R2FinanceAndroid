@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import com.cleaningbutton.r2finance.data.local.entity.TransactionEntity
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 
 /**
  * Open a matched Amazon order in the Shopping app (preferred) or browser.
@@ -13,11 +15,13 @@ import com.cleaningbutton.r2finance.data.local.entity.TransactionEntity
 object AmazonOrderLink {
 
     /** https order-details (canonical; App Links often open Shopping). */
+    private fun enc(n: String): String =
+        URLEncoder.encode(n, StandardCharsets.UTF_8.name())
+
     fun httpsUrl(orderNumber: String?, fallback: String? = null): String? {
         val n = orderNumber?.trim().orEmpty()
         if (n.isNotEmpty()) {
-            return "https://www.amazon.com/your-orders/order-details?orderID=" +
-                Uri.encode(n)
+            return "https://www.amazon.com/your-orders/order-details?orderID=" + enc(n)
         }
         return fallback?.trim()?.takeIf { it.isNotEmpty() }
     }
@@ -30,7 +34,7 @@ object AmazonOrderLink {
         val n = orderNumber?.trim().orEmpty()
         if (n.isEmpty()) return null
         return "com.amazon.mobile.shopping.web://www.amazon.com" +
-            "/gp/your-account/order-details?orderID=" + Uri.encode(n)
+            "/gp/your-account/order-details?orderID=" + enc(n)
     }
 
     fun httpsUrlForTxn(txn: TransactionEntity): String? =
