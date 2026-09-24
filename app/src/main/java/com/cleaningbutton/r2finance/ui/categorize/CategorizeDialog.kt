@@ -29,6 +29,7 @@ import com.cleaningbutton.r2finance.data.AppContainer
 import com.cleaningbutton.r2finance.data.local.entity.CategoryEntity
 import com.cleaningbutton.r2finance.data.repository.TransactionRow
 import com.cleaningbutton.r2finance.domain.DisplayPayee
+import com.cleaningbutton.r2finance.domain.AmazonOrderLink
 import com.cleaningbutton.r2finance.domain.GoogleMaps
 import com.cleaningbutton.r2finance.domain.Money
 import com.cleaningbutton.r2finance.domain.RelativeDate
@@ -84,6 +85,10 @@ fun CategorizeDialog(
     val mapsUrl = remember(targets) {
         if (bulk) null
         else single?.let { GoogleMaps.urlForTxn(it.txn, it.payeeName) }
+    }
+    val amazonMatched = remember(targets) {
+        if (bulk) null
+        else single?.txn?.takeIf { !it.amazonOrderUrl.isNullOrBlank() || !it.amazonOrderNumber.isNullOrBlank() }
     }
 
     LaunchedEffect(planId) {
@@ -199,6 +204,51 @@ fun CategorizeDialog(
                                 },
                             )
                         }
+                    }
+                }
+                if (amazonMatched != null) {
+                    val summary = amazonMatched.amazonItemsSummary
+                        ?.takeIf { it.isNotBlank() }
+                        ?: amazonMatched.amazonItemsJoined?.takeIf { it.isNotBlank() }
+                    val ship = amazonMatched.amazonShipLocation?.takeIf { it.isNotBlank() }
+                        ?: listOfNotNull(
+                            amazonMatched.amazonShipCity?.takeIf { it.isNotBlank() },
+                            amazonMatched.amazonShipState?.takeIf { it.isNotBlank() },
+                        ).takeIf { it.isNotEmpty() }?.joinToString(", ")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            buildString {
+                                append(
+                                    amazonMatched.amazonOrderNumber
+                                        ?.let { "Amazon order $it" }
+                                        ?: "Amazon order",
+                                )
+                                summary?.let {
+                                    append(" · ")
+                                    append(it)
+                                }
+                                ship?.let {
+                                    append(" · 📦 ")
+                                    append(it)
+                                }
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        Text(
+                            "Open in Amazon",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.clickable {
+                                AmazonOrderLink.open(context, amazonMatched)
+                            },
+                        )
                     }
                 }
                 if (!bulk && single != null) {

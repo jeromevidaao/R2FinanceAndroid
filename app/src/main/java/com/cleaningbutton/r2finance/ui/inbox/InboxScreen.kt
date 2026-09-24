@@ -53,6 +53,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.cleaningbutton.r2finance.domain.DisplayPayee
+import com.cleaningbutton.r2finance.domain.AmazonOrderLink
 import com.cleaningbutton.r2finance.domain.GoogleMaps
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cleaningbutton.r2finance.R
@@ -663,7 +664,7 @@ private fun InboxTxnRow(
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.tertiary,
                             modifier = Modifier.clickable {
-                                GoogleMaps.open(context, txn.amazonOrderUrl)
+                                AmazonOrderLink.open(context, txn)
                             },
                         )
                     }

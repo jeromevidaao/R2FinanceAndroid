@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import com.cleaningbutton.r2finance.data.AppContainer
 import com.cleaningbutton.r2finance.data.repository.TransactionRow
 import com.cleaningbutton.r2finance.domain.DisplayPayee
+import com.cleaningbutton.r2finance.domain.AmazonOrderLink
 import com.cleaningbutton.r2finance.domain.GoogleMaps
 import com.cleaningbutton.r2finance.domain.Money
 import com.cleaningbutton.r2finance.domain.RelativeDate
@@ -156,7 +157,7 @@ fun InboxTxnDetailDialog(
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.tertiary,
                         modifier = Modifier.clickable {
-                            GoogleMaps.open(context, txn.amazonOrderUrl)
+                            AmazonOrderLink.open(context, txn)
                         },
                     )
                 }
